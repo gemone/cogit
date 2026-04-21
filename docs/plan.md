@@ -4,7 +4,7 @@
 
 **Architecture:** Multi-panel layout mimicking IDEA's Git tool window: left sidebar (branches/remotes/tags), center file list (unstaged/staged/conflicted), bottom diff viewer, top command bar. All navigation uses vim keybindings; operations follow IDEA's mental model (shelve, cherry-pick, rebase flow, ignore patterns).
 
-**Tech Stack:** Go 1.23+, git2go/v34 (libgit2), Bubble Tea + Lipgloss + Bubbles, cobra (CLI), Viper (config).
+**Tech Stack:** Go 1.23+, git2go/v34 (libgit2 1.5.2 static build), Bubble Tea + Lipgloss + Bubbles, cobra (CLI), Viper (config).
 
 ---
 
@@ -76,7 +76,7 @@ cogit/
 - **Create:** `go.mod` deps (bubbletea, git2go/v34, cobra, viper)
 - **Commit**
 
-**Risk:** git2go/v34 requires libgit2 installed. Document `brew install libgit2` / `apt install libgit2-1.5-dev`.
+**Risk:** git2go/v34 requires libgit2 installed. Document `make deps`.
 
 ### Task 1.2: git2go repo wrapper
 
@@ -302,16 +302,15 @@ cogit/
 ## libgit2 / git2go Notes
 
 - Use `github.com/libgit2/git2go/v34`
-- Requires libgit2 shared library at runtime.
-- Build tags may be needed on some platforms.
-- For line-level staging: libgit2 supports patch application; we can use `git.Apply` with hunks for hunk-level stage/unstage.
+- Requires libgit2 1.5.x shared library at runtime.
+- Build via `make deps` to compile local libgit2 1.5.2 with correct rpath.
 - For diff: `git.Diff` APIs provide unified diff text; parse into hunks ourselves.
 
 ---
 
 ## Risks & Mitigations
 
-1. **CGO/libgit2 distribution:** Users must install libgit2. Mitigation: document install steps; future: static link or switch to go-git for portable builds.
+1. **CGO/libgit2 distribution:** Users must build libgit2 via `make deps`. Mitigation: Makefile automates download/build.
 2. **Rebase/merge conflict UI:** Complex state machine. Mitigation: detect state via filesystem markers + git2go state; show clear "REBASE" indicator in cmdbar.
 3. **Performance on large repos:** Status/diff may be slow. Mitigation: limit file list height + virtual scrolling; async status updates via `tea.Cmd`.
 4. **Windows compatibility:** libgit2 on Windows is fiddly. Mitigation: document MSYS2/vcpkg steps; initial target macOS/Linux.
@@ -320,4 +319,4 @@ cogit/
 
 ## Next Step
 
-Confirm plan → initialize repo on GitHub → delegate to opencode task-by-task.
+Confirm plan → delegate to opencode task-by-task.
