@@ -38,6 +38,10 @@ pub enum Action {
     CommandPalette,
     Help,
     EnterMode(Mode),
+    OpenDiff,
+    IgnoreFile,
+    Search,
+    UpdateDiff(String),
     None,
 }
 

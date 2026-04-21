@@ -1,6 +1,7 @@
 pub mod branch;
 pub mod commit;
 pub mod ignore;
+pub mod index_ops;
 pub mod merge_rebase;
 pub mod remote;
 pub mod repo;
