@@ -1,3 +1,4 @@
+use super::shell;
 use super::{GitError, Repo};
 
 #[derive(Debug, Clone)]
@@ -18,44 +19,41 @@ pub struct WorktreeFile {
 
 impl Repo {
     pub fn status(&self) -> Result<Vec<WorktreeFile>, GitError> {
-        let mut opts = git2::StatusOptions::new();
-        opts.include_untracked(true)
-            .renames_head_to_index(true)
-            .renames_index_to_workdir(true);
+        let output = shell::run_git(&mut shell::git_cmd(&self.path).args([
+            "status",
+            "--porcelain",
+            "--no-renames",
+        ]))?;
 
-        let statuses = self.inner.statuses(Some(&mut opts))?;
         let mut files = Vec::new();
-
-        for entry in statuses.iter() {
-            let path: &str = match entry.path() {
-                Some(p) => p,
-                None => continue,
-            };
-            let status = entry.status();
-
-            let file_status = if status.contains(git2::Status::CONFLICTED) {
-                FileStatus::Conflicted
-            } else if status.contains(git2::Status::IGNORED) {
-                FileStatus::Ignored
-            } else if status.contains(git2::Status::INDEX_NEW)
-                || status.contains(git2::Status::INDEX_MODIFIED)
-                || status.contains(git2::Status::INDEX_RENAMED)
-                || status.contains(git2::Status::INDEX_DELETED)
-            {
-                if status.contains(git2::Status::INDEX_NEW) {
-                    FileStatus::StagedNew
-                } else {
-                    FileStatus::StagedModified
-                }
-            } else if status.contains(git2::Status::WT_NEW) {
-                FileStatus::Untracked
-            } else if status.contains(git2::Status::WT_MODIFIED)
-                || status.contains(git2::Status::WT_DELETED)
-                || status.contains(git2::Status::WT_RENAMED)
-            {
-                FileStatus::Modified
-            } else {
+        for line in output.lines() {
+            if line.len() < 4 {
                 continue;
+            }
+            let x = line.as_bytes()[0];
+            let y = line.as_bytes()[1];
+            let path = &line[3..];
+
+            let file_status = match (x, y) {
+                (b'?' | b'!', _) | (_, b'?' | b'!') => {
+                    // Untracked or ignored
+                    if x == b'!' || y == b'!' {
+                        FileStatus::Ignored
+                    } else {
+                        FileStatus::Untracked
+                    }
+                }
+                (b'U', _) | (_, b'U') | (b'A', b'A') | (b'D', b'D') => FileStatus::Conflicted,
+                (b'A', _) | (b'C', _) => FileStatus::StagedNew,
+                (b'M', _) => FileStatus::StagedModified,
+                (_, b'M') | (_, b'D') | (_, b'A') => {
+                    // Working tree change — if index also staged, already handled above
+                    FileStatus::Modified
+                }
+                // Other cases: renamed (R), deleted in index (D)
+                (b'D', _) => FileStatus::StagedModified,
+                (b'R', _) => FileStatus::StagedModified,
+                _ => continue,
             };
 
             files.push(WorktreeFile {

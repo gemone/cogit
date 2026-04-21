@@ -5,6 +5,7 @@ pub mod index_ops;
 pub mod merge_rebase;
 pub mod remote;
 pub mod repo;
+pub mod shell;
 pub mod shelve;
 pub mod stash;
 pub mod status;
@@ -16,8 +17,6 @@ pub use status::{FileStatus, WorktreeFile};
 
 #[derive(Debug, Error)]
 pub enum GitError {
-    #[error("git2 error: {0}")]
-    Git2(#[from] git2::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("not a git repository")]
@@ -34,8 +33,14 @@ pub enum GitError {
     ShelveNotFound(String),
     #[error("branch not found: {0}")]
     BranchNotFound(String),
-    #[error("other: {0}")]
+    #[error("git error: {0}")]
     Other(String),
+}
+
+impl From<gix::discover::Error> for GitError {
+    fn from(e: gix::discover::Error) -> Self {
+        GitError::Other(e.to_string())
+    }
 }
 
 #[derive(Debug, Clone)]
