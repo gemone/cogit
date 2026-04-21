@@ -43,6 +43,10 @@ impl FileListPanel {
         self.files.get(self.cursor)
     }
 
+    pub fn selected_file_path(&self) -> Option<String> {
+        self.files.get(self.cursor).map(|f| f.path.clone())
+    }
+
     pub fn cursor(&self) -> usize {
         self.cursor
     }
@@ -301,5 +305,13 @@ impl Panel for FileListPanel {
             _ => {}
         }
         None
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

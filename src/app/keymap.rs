@@ -36,6 +36,7 @@ impl Default for KeyMap {
         filelist.insert((KeyModifiers::SHIFT, KeyCode::Char('I')), Action::ToggleIgnore);
         filelist.insert((KeyModifiers::SHIFT, KeyCode::Char('U')), Action::ToggleUntracked);
         filelist.insert((KeyModifiers::NONE, KeyCode::Char('/')), Action::CommandPalette);
+        filelist.insert((KeyModifiers::NONE, KeyCode::Char('c')), Action::CommitDialog);
 
         let mut sidebar = HashMap::new();
         sidebar.insert((KeyModifiers::NONE, KeyCode::Char('c')), Action::Checkout);

@@ -220,12 +220,48 @@ pub fn discard_path(repo_path: &Path, path: &str) -> Result<(), GitError> {
     Ok(())
 }
 
+pub fn diff_for_file(repo_path: &Path, path: &str) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["diff", "--", path]);
+    run_git(&mut cmd)
+}
+
+pub fn diff_staged_for_file(repo_path: &Path, path: &str) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["diff", "--cached", "--", path]);
+    run_git(&mut cmd)
+}
+
 pub fn diff_to_file(repo_path: &Path, paths: &[&str]) -> Result<String, GitError> {
     let mut cmd = git_cmd(repo_path);
     cmd.args(["diff"]);
     for p in paths {
         cmd.arg("--").arg(p);
     }
+    run_git(&mut cmd)
+}
+
+pub fn list_branches(repo_path: &Path) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["branch", "--format=%(refname:short)"]);
+    run_git(&mut cmd)
+}
+
+pub fn list_remote_branches(repo_path: &Path) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["branch", "-r", "--format=%(refname:short)"]);
+    run_git(&mut cmd)
+}
+
+pub fn list_tags(repo_path: &Path) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["tag"]);
+    run_git(&mut cmd)
+}
+
+pub fn log_oneline(repo_path: &Path, n: usize) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["log", &format!("-{}", n), "--oneline"]);
     run_git(&mut cmd)
 }
 

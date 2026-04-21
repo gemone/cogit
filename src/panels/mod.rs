@@ -1,8 +1,7 @@
+use std::any::Any;
+
 use crossterm::event::KeyEvent;
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-};
+use ratatui::{buffer::Buffer, layout::Rect};
 
 use crate::gitops::{GitError, Repo};
 
@@ -31,6 +30,7 @@ pub enum Action {
     ToggleIgnore,
     ToggleUntracked,
     Checkout,
+    CheckoutBranch(String),
     NewBranch,
     DeleteBranch,
     Refresh,
@@ -42,6 +42,9 @@ pub enum Action {
     IgnoreFile(String),
     Search,
     UpdateDiff(String),
+    CommitDialog,
+    Commit(String),
+    AmendCommit,
     None,
 }
 
@@ -60,4 +63,6 @@ pub trait Panel {
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action>;
     fn title(&self) -> &str;
     fn refresh(&mut self, repo: &mut Repo) -> Result<(), GitError>;
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }

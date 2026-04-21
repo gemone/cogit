@@ -56,9 +56,19 @@ impl Panel for CmdbarPanel {
     }
 
     fn refresh(&mut self, repo: &mut Repo) -> Result<(), GitError> {
-        self.branch = repo.head_shorthand().unwrap_or_else(|| "(detached)".to_string());
+        self.branch = repo
+            .head_shorthand()
+            .unwrap_or_else(|| "(detached)".to_string());
         // TODO: detect rebase/merge state in P3
         self.operation.clear();
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

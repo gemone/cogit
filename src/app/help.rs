@@ -113,6 +113,7 @@ fn help_rows(panel: &str, _mode: Mode) -> Vec<Row<'static>> {
             ("a", "Stage all"),
             ("A", "Unstage all"),
             ("d", "Discard"),
+            ("c", "Commit"),
             ("Enter", "Open diff"),
             ("i / I", "Toggle ignore"),
             ("U", "Toggle untracked"),
