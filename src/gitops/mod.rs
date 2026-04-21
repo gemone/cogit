@@ -67,3 +67,12 @@ pub struct RemoteInfo {
     pub name: String,
     pub url: Option<String>,
 }
+
+#[derive(Debug, Clone)]
+pub struct CommitInfo {
+    pub hash: String,
+    pub oid: String,
+    pub author: String,
+    pub date: String,
+    pub subject: String,
+}

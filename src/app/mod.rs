@@ -19,7 +19,8 @@ use ratatui::{
 
 use crate::gitops::{GitError, Repo};
 use crate::panels::{
-    Action, CmdbarPanel, DiffViewerPanel, FileListPanel, Mode, Panel, SidebarPanel,
+    branch_panel::BranchPanel, log_panel::LogPanel, Action, CmdbarPanel, DiffViewerPanel,
+    FileListPanel, Mode, Panel, SidebarPanel,
 };
 
 use cmdline::Cmdline;
@@ -28,6 +29,13 @@ use help::Help;
 use keymap::KeyMap;
 use styles::Styles;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum View {
+    Main,
+    Branches,
+    Log,
+}
+
 pub struct App {
     repo: Repo,
     panels: Vec<Box<dyn Panel>>,
@@ -35,11 +43,14 @@ pub struct App {
     diff_idx: usize,
     focus_idx: usize,
     mode: Mode,
+    view: View,
     styles: Styles,
     keymap: KeyMap,
     cmdline: Cmdline,
     commit_dialog: CommitDialog,
     help: Help,
+    branch_panel: BranchPanel,
+    log_panel: LogPanel,
     should_quit: bool,
     size: Rect,
 }
@@ -79,11 +90,14 @@ impl App {
             diff_idx,
             focus_idx: 1,
             mode: Mode::Normal,
+            view: View::Main,
             styles,
             keymap,
             cmdline: Cmdline::new(),
             commit_dialog: CommitDialog::new(),
             help: Help::new(),
+            branch_panel: BranchPanel::new(),
+            log_panel: LogPanel::new(),
             should_quit: false,
             size: Rect::default(),
         })
@@ -129,19 +143,29 @@ impl App {
         // Top bar (cmdbar)
         self.panels[0].render(top_area, buf, &self.styles);
 
-        // Middle: sidebar | filelist | diffviewer
-        let mid_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(25),
-                Constraint::Percentage(35),
-                Constraint::Percentage(40),
-            ])
-            .split(middle_area);
+        // Middle: depends on current view
+        match self.view {
+            View::Main => {
+                let mid_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(25),
+                        Constraint::Percentage(35),
+                        Constraint::Percentage(40),
+                    ])
+                    .split(middle_area);
 
-        self.panels[1].render(mid_chunks[0], buf, &self.styles);
-        self.panels[2].render(mid_chunks[1], buf, &self.styles);
-        self.panels[3].render(mid_chunks[2], buf, &self.styles);
+                self.panels[1].render(mid_chunks[0], buf, &self.styles);
+                self.panels[2].render(mid_chunks[1], buf, &self.styles);
+                self.panels[3].render(mid_chunks[2], buf, &self.styles);
+            }
+            View::Branches => {
+                self.branch_panel.render(middle_area, buf, &self.styles);
+            }
+            View::Log => {
+                self.log_panel.render(middle_area, buf, &self.styles);
+            }
+        }
 
         // Bottom status
         let mode_text = format!("[{}]", mode_label(self.mode));
@@ -189,6 +213,23 @@ impl App {
                 if self.mode == Mode::Command && self.cmdline.visible {
                     self.handle_command_key(key);
                     return Ok(());
+                }
+
+                // Route keys to branch/log panels when those views are active
+                match self.view {
+                    View::Branches => {
+                        if let Some(action) = self.branch_panel.handle_key(key) {
+                            self.dispatch(action, key)?;
+                        }
+                        return Ok(());
+                    }
+                    View::Log => {
+                        if let Some(action) = self.log_panel.handle_key(key) {
+                            self.dispatch(action, key)?;
+                        }
+                        return Ok(());
+                    }
+                    View::Main => {}
                 }
 
                 let panel = self.focused_panel_name();
@@ -305,9 +346,29 @@ impl App {
     fn dispatch(&mut self, action: Action, key: KeyEvent) -> Result<(), GitError> {
         match action {
             Action::Quit => self.should_quit = true,
-            Action::FocusSidebar => self.set_focus(1),
-            Action::FocusFilelist => self.set_focus(2),
-            Action::FocusDiff => self.set_focus(3),
+            Action::FocusSidebar => {
+                self.view = View::Main;
+                self.set_focus(1);
+            }
+            Action::FocusFilelist => {
+                self.view = View::Main;
+                self.set_focus(2);
+            }
+            Action::FocusDiff => {
+                self.view = View::Main;
+                self.set_focus(3);
+            }
+            Action::ShowBranchPanel => {
+                self.view = View::Branches;
+                self.branch_panel.refresh(&mut self.repo)?;
+            }
+            Action::ShowLogPanel => {
+                self.view = View::Log;
+                self.log_panel.refresh(&mut self.repo)?;
+            }
+            Action::BackToMain => {
+                self.view = View::Main;
+            }
             Action::CommandPalette => {
                 self.cmdline.open();
                 self.mode = Mode::Command;
@@ -318,6 +379,15 @@ impl App {
             }
             Action::Refresh => {
                 self.refresh_all()?;
+                match self.view {
+                    View::Branches => {
+                        self.branch_panel.refresh(&mut self.repo)?;
+                    }
+                    View::Log => {
+                        self.log_panel.refresh(&mut self.repo)?;
+                    }
+                    View::Main => {}
+                }
             }
             Action::EnterMode(m) => self.mode = m,
             Action::Stage => {
@@ -394,6 +464,153 @@ impl App {
                 // Open search — delegate to command palette
                 self.cmdline.open();
                 self.mode = Mode::Command;
+            }
+            // Branch panel actions
+            Action::CheckoutSmart(name) => {
+                if self.repo.is_dirty() {
+                    self.branch_panel.show_smart_checkout(&name);
+                } else {
+                    self.repo.checkout(&name)?;
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::ForceCheckout(name) => {
+                self.repo.checkout(&name)?;
+                self.branch_panel.refresh(&mut self.repo)?;
+            }
+            Action::CreateBranch(name) => {
+                if let Err(e) = self.repo.create_branch(&name, "HEAD") {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.repo.checkout(&name)?;
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::NewBranchDialog => {
+                self.branch_panel.show_new_branch_dialog();
+            }
+            Action::DeleteBranchConfirm(name) => {
+                if let Err(e) = self.repo.delete_branch(&name, false) {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status(&format!("Deleted branch {}", name));
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::RenameBranch { old_name, new_name } => {
+                if let Err(e) = self.repo.rename_branch(&old_name, &new_name) {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status(&format!(
+                        "Renamed {} → {}",
+                        old_name, new_name
+                    ));
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::FetchRemote(remote) => {
+                if let Err(e) = self.repo.fetch(&remote) {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status(&format!("Fetched {}", remote));
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::FetchAll => {
+                if let Err(e) = self.repo.fetch_all() {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status("Fetched all remotes");
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::PullDialog => {
+                self.branch_panel.show_pull_dialog();
+            }
+            Action::PullMerge => {
+                let branch = self.repo.current_branch_name();
+                if let Err(e) = self.repo.pull_merge("origin", &branch) {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status("Pull (merge) completed");
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::PullRebase => {
+                let branch = self.repo.current_branch_name();
+                if let Err(e) = self.repo.pull_rebase("origin", &branch) {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status("Pull (rebase) completed");
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::PushCurrent => {
+                if let Err(e) = self.repo.push_current() {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status("Pushed current branch");
+                }
+            }
+            Action::MergeBranch(name) => {
+                match self.repo.merge(&name) {
+                    Ok(_) => {
+                        self.branch_panel.set_status(&format!("Merged {}", name));
+                        self.branch_panel.refresh(&mut self.repo)?;
+                    }
+                    Err(e) => {
+                        self.branch_panel.set_status(&format!("Error: {}", e));
+                    }
+                }
+            }
+            Action::RebaseOnto(name) => {
+                if let Err(e) = self.repo.rebase(&name) {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status(&format!("Rebased onto {}", name));
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            Action::Stash => {
+                if let Err(e) = self.repo.stash_save("auto-stash", true) {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status("Stashed changes");
+                }
+            }
+            Action::StashPop => {
+                if let Err(e) = self.repo.stash_pop(0) {
+                    self.branch_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.branch_panel.set_status("Popped stash");
+                    self.branch_panel.refresh(&mut self.repo)?;
+                }
+            }
+            // Log panel actions
+            Action::CherryPick(oid) => {
+                if let Err(e) = self.repo.cherry_pick(&oid) {
+                    self.log_panel.set_status(&format!("Error: {}", e));
+                } else {
+                    self.log_panel.set_status(&format!("Cherry-picked {}", &oid[..7]));
+                }
+            }
+            Action::CopyHash(hash) => {
+                // Try to copy to clipboard via pbcopy (macOS)
+                let short = if hash.len() > 7 { &hash[..7] } else { &hash };
+                let _ = std::process::Command::new("pbcopy")
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                    .and_then(|mut child| {
+                        use std::io::Write;
+                        if let Some(stdin) = child.stdin.as_mut() {
+                            let _ = stdin.write_all(hash.as_bytes());
+                        }
+                        child.wait()
+                    });
+                self.log_panel.set_status(&format!("Copied: {}", short));
+            }
+            Action::SearchCommits => {
+                self.log_panel.open_search();
             }
             Action::None => {
                 // Pass unhandled keys to focused panel

@@ -23,6 +23,8 @@ impl Default for KeyMap {
         global.insert((KeyModifiers::NONE, KeyCode::Char(':')), Action::CommandPalette);
         global.insert((KeyModifiers::NONE, KeyCode::Char('?')), Action::Help);
         global.insert((KeyModifiers::NONE, KeyCode::Char('q')), Action::Quit);
+        global.insert((KeyModifiers::NONE, KeyCode::Char('4')), Action::ShowBranchPanel);
+        global.insert((KeyModifiers::NONE, KeyCode::Char('5')), Action::ShowLogPanel);
 
         let mut filelist = HashMap::new();
         filelist.insert((KeyModifiers::NONE, KeyCode::Char(' ')), Action::Stage);

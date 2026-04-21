@@ -290,6 +290,67 @@ pub fn checkout_paths(repo_path: &Path, paths: &[&str]) -> Result<(), GitError> 
     Ok(())
 }
 
+pub fn is_dirty(repo_path: &Path) -> bool {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["status", "--porcelain"]);
+    run_git(&mut cmd).map(|s| !s.is_empty()).unwrap_or(false)
+}
+
+pub fn fetch(repo_path: &Path, remote: &str) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["fetch", remote]);
+    run_git(&mut cmd)
+}
+
+pub fn fetch_all(repo_path: &Path) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["fetch", "--all"]);
+    run_git(&mut cmd)
+}
+
+pub fn pull_merge(repo_path: &Path, remote: &str, branch: &str) -> Result<(), GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["pull", "--no-rebase", remote, branch]);
+    run_git(&mut cmd)?;
+    Ok(())
+}
+
+pub fn pull_rebase(repo_path: &Path, remote: &str, branch: &str) -> Result<(), GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["pull", "--rebase", remote, branch]);
+    run_git(&mut cmd)?;
+    Ok(())
+}
+
+pub fn rename_branch(repo_path: &Path, old: &str, new: &str) -> Result<(), GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["branch", "-m", old, new]);
+    run_git(&mut cmd)?;
+    Ok(())
+}
+
+pub fn log_detailed(repo_path: &Path, count: usize) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args([
+        "log",
+        &format!("-{}", count),
+        "--format=%H%n%h%n%an%n%ar%n%s%n---END---",
+    ]);
+    run_git(&mut cmd)
+}
+
+pub fn show_commit(repo_path: &Path, oid: &str) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["show", "--stat", oid]);
+    run_git(&mut cmd)
+}
+
+pub fn diff_commit(repo_path: &Path, oid: &str) -> Result<String, GitError> {
+    let mut cmd = git_cmd(repo_path);
+    cmd.args(["show", oid]);
+    run_git(&mut cmd)
+}
+
 /// Check if a rebase is in progress by looking at .git directory state.
 pub fn is_rebasing(repo_path: &Path) -> bool {
     let git_dir = find_git_dir(repo_path);

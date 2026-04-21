@@ -32,6 +32,13 @@ impl Repo {
         Ok(())
     }
 
+    pub fn fetch_all(&self) -> Result<(), GitError> {
+        let mut cmd = shell::git_cmd(&self.path);
+        cmd.args(["fetch", "--all"]);
+        shell::run_git(&mut cmd)?;
+        Ok(())
+    }
+
     pub fn push(&self, remote: &str, refspec: &str) -> Result<(), GitError> {
         shell::push(&self.path, remote, refspec)
     }
