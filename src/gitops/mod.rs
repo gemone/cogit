@@ -11,6 +11,7 @@ pub mod status;
 use thiserror::Error;
 
 pub use repo::Repo;
+pub use status::{FileStatus, WorktreeFile};
 
 #[derive(Debug, Error)]
 pub enum GitError {
