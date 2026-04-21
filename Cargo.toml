@@ -18,3 +18,4 @@ unicode-width = "0.2"
 unicode-segmentation = "1.12"
 regex = "1.11"
 chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
