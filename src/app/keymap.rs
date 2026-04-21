@@ -30,7 +30,7 @@ impl Default for KeyMap {
         filelist.insert((KeyModifiers::NONE, KeyCode::Char('u')), Action::Unstage);
         filelist.insert((KeyModifiers::NONE, KeyCode::Char('a')), Action::StageAll);
         filelist.insert((KeyModifiers::SHIFT, KeyCode::Char('A')), Action::UnstageAll);
-        filelist.insert((KeyModifiers::NONE, KeyCode::Char('d')), Action::Discard);
+        filelist.insert((KeyModifiers::NONE, KeyCode::Char('d')), Action::Discard(String::new()));
         filelist.insert((KeyModifiers::NONE, KeyCode::Enter), Action::FocusDiff);
         filelist.insert((KeyModifiers::NONE, KeyCode::Char('i')), Action::ToggleIgnore);
         filelist.insert((KeyModifiers::SHIFT, KeyCode::Char('I')), Action::ToggleIgnore);
