@@ -66,6 +66,10 @@ pub enum Action {
     ResetDialog(String),   // mode for dialog
     // WIP
     WipCommit,
+    // Gitignore
+    ShowGitignore,
+    GitignoreAdd(String),
+    GitignoreRemove(String),
 }
 
 pub trait Panel {

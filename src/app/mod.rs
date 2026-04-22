@@ -56,6 +56,7 @@ pub struct App {
     rename_dialog: Option<(String, String)>, // (old_name, new_name being typed)
     reset_dialog: Option<(String, String, bool)>, // (mode, path, selecting_mode)
     pending_checkout: Option<String>, // branch name waiting for stash confirmation
+    gitignore_popup: Option<(String, u16)>, // (content, scroll)
     help_overlay: HelpOverlay,
 }
 
@@ -91,6 +92,7 @@ impl App {
             rename_dialog: None,
             reset_dialog: None,
             pending_checkout: None,
+            gitignore_popup: None,
             help_overlay,
         })
     }
@@ -185,6 +187,47 @@ impl App {
                 }
                 KeyCode::PageUp | KeyCode::Char('K') => {
                     if let Some((_, _, ref mut scroll)) = self.diff_popup {
+                        *scroll = scroll.saturating_sub(15);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Gitignore popup takes priority
+        if self.gitignore_popup.is_some() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.gitignore_popup = None;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
+                        *scroll = scroll.saturating_add(1);
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
+                        *scroll = scroll.saturating_sub(1);
+                    }
+                }
+                KeyCode::Char('G') => {
+                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
+                        *scroll = u16::MAX;
+                    }
+                }
+                KeyCode::Char('g') => {
+                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
+                        *scroll = 0;
+                    }
+                }
+                KeyCode::PageDown | KeyCode::Char('J') => {
+                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
+                        *scroll = scroll.saturating_add(15);
+                    }
+                }
+                KeyCode::PageUp | KeyCode::Char('K') => {
+                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
                         *scroll = scroll.saturating_sub(15);
                     }
                 }
@@ -308,6 +351,40 @@ impl App {
                         reset_state.1.clear();
                     }
                     reset_state.1.push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Pending checkout confirmation (smart checkout with stash)
+        if self.pending_checkout.is_some() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => {
+                    let branch = self.pending_checkout.take();
+                    if let Some(name) = branch {
+                        // Stash first, then checkout
+                        if let Err(e) = self.repo.stash_create(None) {
+                            self.notifications
+                                .notify_error(&format!("Stash failed: {}", e));
+                        } else {
+                            match self.repo.checkout(&name) {
+                                Ok(_) => {
+                                    self.notifications
+                                        .notify(&format!("Stashed and switched to {}", name));
+                                    self.refresh_all();
+                                }
+                                Err(e) => {
+                                    self.notifications
+                                        .notify_error(&format!("Checkout failed: {}", e));
+                                }
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.pending_checkout = None;
+                    self.notifications.notify("Checkout cancelled");
                 }
                 _ => {}
             }
@@ -512,6 +589,42 @@ impl App {
             }
             return;
         }
+        // Parse ignore (show .gitignore)
+        if cmd == ":ignore" {
+            self.dispatch(Action::ShowGitignore);
+            return;
+        }
+        // Parse ignore-add <pattern>
+        if let Some(pattern) = cmd.strip_prefix(":ignore-add ") {
+            let pattern = pattern.trim();
+            if !pattern.is_empty() {
+                self.dispatch(Action::GitignoreAdd(pattern.to_string()));
+            } else {
+                self.notifications.notify_error("Usage: :ignore-add <pattern>");
+            }
+            return;
+        }
+        // Parse ignore-remove <pattern>
+        if let Some(pattern) = cmd.strip_prefix(":ignore-remove ") {
+            let pattern = pattern.trim();
+            if !pattern.is_empty() {
+                self.dispatch(Action::GitignoreRemove(pattern.to_string()));
+            } else {
+                self.notifications.notify_error("Usage: :ignore-remove <pattern>");
+            }
+            return;
+        }
+        // Parse ignore <pattern> (add mode)
+        if let Some(pattern) = cmd.strip_prefix(":ignore ") {
+            let pattern = pattern.trim();
+            if !pattern.is_empty() {
+                self.dispatch(Action::GitignoreAdd(pattern.to_string()));
+            } else {
+                // Show gitignore if no pattern
+                self.dispatch(Action::ShowGitignore);
+            }
+            return;
+        }
 
         let action = match cmd {
             ":w" | ":stage" => Action::Stage,
@@ -670,16 +783,27 @@ impl App {
                     .notifications
                     .notify_error(&format!("Amend failed: {}", e)),
             },
-            Action::CheckoutBranch(name) => match self.repo.checkout(&name) {
-                Ok(_) => {
-                    self.notifications.notify(&format!("Switched to {}", name));
-                    self.refresh_all();
-                }
-                Err(e) => {
+            Action::CheckoutBranch(name) => {
+                // Check for uncommitted changes
+                let has_changes = self.filelist.files.iter().any(|f| f.staged || f.status == '?');
+                if has_changes {
+                    self.pending_checkout = Some(name.clone());
                     self.notifications
-                        .notify_error(&format!("Checkout failed: {}", e));
+                        .notify("Uncommitted changes. Stash and switch? (y/n)");
+                } else {
+                    // No changes, proceed directly
+                    match self.repo.checkout(&name) {
+                        Ok(_) => {
+                            self.notifications.notify(&format!("Switched to {}", name));
+                            self.refresh_all();
+                        }
+                        Err(e) => {
+                            self.notifications
+                                .notify_error(&format!("Checkout failed: {}", e));
+                        }
+                    }
                 }
-            },
+            }
             Action::PushCurrent => match self.repo.push_current() {
                 Ok(_) => {
                     self.notifications.notify("Pushed successfully");
@@ -990,6 +1114,42 @@ impl App {
                     }
                 }
             }
+            Action::ShowGitignore => {
+                match self.repo.gitignore_read() {
+                    Ok(content) => {
+                        if content.is_empty() {
+                            self.notifications.notify(".gitignore is empty or does not exist");
+                        } else {
+                            self.gitignore_popup = Some((content, 0));
+                        }
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to read .gitignore: {}", e));
+                    }
+                }
+            }
+            Action::GitignoreAdd(pattern) => {
+                match self.repo.gitignore_add(&pattern) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Added to .gitignore: {}", pattern));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to add to .gitignore: {}", e));
+                    }
+                }
+            }
+            Action::GitignoreRemove(pattern) => {
+                match self.repo.gitignore_remove(&pattern) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Removed from .gitignore: {}", pattern));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to remove from .gitignore: {}", e));
+                    }
+                }
+            }
         }
     }
 
@@ -1105,6 +1265,11 @@ impl App {
         // Reset dialog overlay
         if let Some(ref reset_state) = self.reset_dialog {
             self.draw_reset_dialog(f, size, reset_state);
+        }
+
+        // Gitignore popup overlay
+        if let Some((ref content, scroll)) = self.gitignore_popup {
+            self.draw_gitignore_popup(f, size, content, &scroll);
         }
 
         // Notifications on top of everything
@@ -1482,6 +1647,52 @@ impl App {
                     .borders(Borders::ALL)
                     .title(title_str.as_str())
                     .border_style(Style::default().fg(ratatui::style::Color::Yellow)),
+            )
+            .scroll(((*scroll), 0));
+
+        f.render_widget(paragraph, inner);
+    }
+
+    fn draw_gitignore_popup(&self, f: &mut Frame, area: Rect, content: &str, scroll: &u16) {
+        let popup_w = (area.width * 4 / 5).max(40);
+        let popup_h = (area.height * 4 / 5).max(10);
+        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+        let clear = Block::default().style(
+            Style::default()
+                .bg(ratatui::style::Color::Black)
+                .fg(ratatui::style::Color::White),
+        );
+        f.render_widget(clear, popup_area);
+
+        let inner = Rect {
+            x: popup_area.x + 1,
+            y: popup_area.y + 1,
+            width: popup_area.width.saturating_sub(2),
+            height: popup_area.height.saturating_sub(3),
+        };
+
+        let lines: Vec<Line> = content
+            .lines()
+            .enumerate()
+            .map(|(i, line)| {
+                let style = if i == 0 {
+                    Style::default().fg(ratatui::style::Color::Green)
+                } else {
+                    Style::default().fg(ratatui::style::Color::White)
+                };
+                Line::from(Span::styled(line.to_string(), style))
+            })
+            .collect();
+
+        let paragraph = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" .gitignore (j/k:scroll G/g:jump PgUp/PgDn) ")
+                    .border_style(Style::default().fg(ratatui::style::Color::Green)),
             )
             .scroll(((*scroll), 0));
 

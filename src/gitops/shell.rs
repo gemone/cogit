@@ -399,4 +399,49 @@ impl Repository {
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
+
+    pub fn gitignore_read(&self) -> Result<String> {
+        let gitignore_path = self.path.join(".gitignore");
+        if gitignore_path.exists() {
+            Ok(std::fs::read_to_string(&gitignore_path)?)
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    pub fn gitignore_add(&self, pattern: &str) -> Result<()> {
+        let gitignore_path = self.path.join(".gitignore");
+        let mut content = if gitignore_path.exists() {
+            std::fs::read_to_string(&gitignore_path)?
+        } else {
+            String::new()
+        };
+        // Append pattern if not already present
+        if !content.contains(pattern) {
+            if !content.ends_with('\n') && !content.is_empty() {
+                content.push('\n');
+            }
+            content.push_str(pattern);
+            content.push('\n');
+            std::fs::write(&gitignore_path, content)?;
+        }
+        Ok(())
+    }
+
+    pub fn gitignore_remove(&self, pattern: &str) -> Result<()> {
+        let gitignore_path = self.path.join(".gitignore");
+        if !gitignore_path.exists() {
+            return Ok(());
+        }
+        let content = std::fs::read_to_string(&gitignore_path)?;
+        let new_content: String = content
+            .lines()
+            .filter(|line| line != &pattern)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if new_content != content {
+            std::fs::write(&gitignore_path, new_content)?;
+        }
+        Ok(())
+    }
 }
