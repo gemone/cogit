@@ -1,78 +1,87 @@
 use ratatui::{
-    buffer::Buffer,
     layout::Rect,
-    widgets::{Block, Borders, Paragraph, Widget},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, Paragraph},
+    Frame,
 };
 
-use super::styles::Styles;
+use crate::app::styles::Styles;
 
-pub struct Cmdline {
-    pub input: String,
-    pub cursor: usize,
-    pub visible: bool,
+pub struct CmdLine {
+    visible: bool,
+    input: String,
+    cursor: usize,
+    styles: Styles,
 }
 
-impl Cmdline {
-    pub fn new() -> Self {
+impl CmdLine {
+    pub fn new(styles: &Styles) -> Self {
         Self {
+            visible: false,
             input: String::new(),
             cursor: 0,
-            visible: false,
+            styles: styles.clone(),
         }
     }
 
     pub fn open(&mut self) {
         self.visible = true;
         self.input.clear();
-        self.cursor = 0;
+        self.input.push(':');
+        self.cursor = self.input.len();
     }
 
     pub fn close(&mut self) {
         self.visible = false;
         self.input.clear();
-        self.cursor = 0;
     }
 
-    pub fn push_char(&mut self, c: char) {
-        self.input.insert(self.cursor, c);
-        self.cursor += 1;
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn input_char(&mut self, c: char) {
+        self.input.push(c);
+        self.cursor = self.input.len();
     }
 
     pub fn backspace(&mut self) {
-        if self.cursor > 0 {
+        if self.cursor > 1 {
+            self.input.remove(self.cursor - 1);
             self.cursor -= 1;
-            self.input.remove(self.cursor);
-        }
-    }
-
-    pub fn move_cursor_left(&mut self) {
-        if self.cursor > 0 {
-            self.cursor -= 1;
-        }
-    }
-
-    pub fn move_cursor_right(&mut self) {
-        if self.cursor < self.input.len() {
-            self.cursor += 1;
         }
     }
 
     pub fn submit(&mut self) -> String {
-        let text = self.input.clone();
-        self.close();
-        text
+        let cmd = self.input.trim().to_string();
+        self.visible = false;
+        self.input.clear();
+        cmd
     }
 
-    pub fn render(&self, area: Rect, buf: &mut Buffer, styles: &Styles) {
+    pub fn render(&mut self, f: &mut Frame, area: Rect) {
         if !self.visible {
             return;
         }
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(styles.border_active)
-            .title("Command");
-        let text = ratatui::text::Text::raw(&self.input);
-        let paragraph = Paragraph::new(text).block(block);
-        paragraph.render(area, buf);
+
+        let display = if self.input.is_empty() {
+            ":".to_string()
+        } else {
+            self.input.clone()
+        };
+
+        let cmd_line = Paragraph::new(display)
+            .style(
+                self.styles
+                    .text_primary
+                    .add_modifier(Modifier::BOLD),
+            )
+            .block(
+                Block::default()
+                    .borders(Borders::NONE)
+                    .style(Style::default().bg(Color::Black)),
+            );
+
+        f.render_widget(cmd_line, area);
     }
 }

@@ -1,63 +1,69 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::panels::Mode;
-
 #[derive(Debug, Clone, PartialEq)]
+pub enum Mode {
+    Normal,
+    Visual,
+    Command,
+    Insert,
+}
+
+#[derive(Debug, Clone)]
 pub enum Motion {
-    Up(usize),
-    Down(usize),
-    Top,
-    Bottom,
+    Up,
+    Down,
     PageUp,
     PageDown,
-    Left,
-    Right,
-    NextWord,
-    PrevWord,
-    LineStart,
-    LineEnd,
-    Search(String),
-    NextMatch,
-    PrevMatch,
-    NoOp,
+    Top,
+    Bottom,
+    Enter,
+    Tab,
+    Escape,
+    Char(char),
+    Delete,
+    Search,
 }
 
 pub fn parse_key_event(key: KeyEvent, mode: Mode) -> Option<Motion> {
     match mode {
-        Mode::Normal | Mode::Visual => parse_normal(key),
-        Mode::Command | Mode::Insert => None,
+        Mode::Normal => parse_normal(key),
+        Mode::Command | Mode::Insert => parse_insert(key),
+        Mode::Visual => parse_normal(key),
     }
 }
 
 fn parse_normal(key: KeyEvent) -> Option<Motion> {
     match key.code {
-        KeyCode::Char('h') | KeyCode::Left => Some(Motion::Left),
-        KeyCode::Char('j') | KeyCode::Down => Some(Motion::Down(1)),
-        KeyCode::Char('k') | KeyCode::Up => Some(Motion::Up(1)),
-        KeyCode::Char('l') | KeyCode::Right => Some(Motion::Right),
+        KeyCode::Char('j') | KeyCode::Down => Some(Motion::Down),
+        KeyCode::Char('k') | KeyCode::Up => Some(Motion::Up),
+        KeyCode::Char('G') => Some(Motion::Bottom),
         KeyCode::Char('g') => {
-            // gg handled separately via pending; here just Top for single g if we get it
+            // gg for top - simplified: single g goes to top
             Some(Motion::Top)
         }
-        KeyCode::Char('G') => Some(Motion::Bottom),
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(Motion::PageUp)
-        }
+        KeyCode::PageUp => Some(Motion::PageUp),
+        KeyCode::PageDown => Some(Motion::PageDown),
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Some(Motion::PageDown)
         }
-        KeyCode::Char('0') => Some(Motion::LineStart),
-        KeyCode::Char('w') => Some(Motion::NextWord),
-        KeyCode::Char('b') => Some(Motion::PrevWord),
-        KeyCode::Char('n') => Some(Motion::NextMatch),
-        KeyCode::Char('N') => Some(Motion::PrevMatch),
-        KeyCode::Char('$') => Some(Motion::LineEnd),
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(Motion::PageUp)
+        }
+        KeyCode::Enter => Some(Motion::Enter),
+        KeyCode::Tab => Some(Motion::Tab),
+        KeyCode::Esc => Some(Motion::Escape),
+        KeyCode::Char(c) => Some(Motion::Char(c)),
         _ => None,
     }
 }
 
-/// Parse a key with an optional count prefix. Returns the motion and remaining key if count consumed part.
-/// For MVP we handle single-digit counts directly in panels.
-pub fn parse_with_count(key: KeyEvent, _count: Option<usize>) -> Option<Motion> {
-    parse_normal(key)
+fn parse_insert(key: KeyEvent) -> Option<Motion> {
+    match key.code {
+        KeyCode::Esc => Some(Motion::Escape),
+        KeyCode::Enter => Some(Motion::Enter),
+        KeyCode::Tab => Some(Motion::Tab),
+        KeyCode::Char(c) => Some(Motion::Char(c)),
+        KeyCode::Backspace => Some(Motion::Delete),
+        _ => None,
+    }
 }

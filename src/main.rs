@@ -1,61 +1,40 @@
-use std::io;
-use std::path::PathBuf;
-
-use clap::Parser;
-use crossterm::{
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
-};
-use ratatui::{backend::CrosstermBackend, Terminal};
+#![allow(dead_code)]
 
 mod app;
-mod config;
 mod gitops;
 mod panels;
 mod vimkeys;
 
-use app::App;
-use gitops::Repo;
+use anyhow::Result;
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::prelude::*;
+use std::io;
 
-#[derive(Parser)]
-struct Cli {
-    #[arg(short = 'C', long = "repo", default_value = ".")]
-    repo: PathBuf,
-}
-
-fn main() {
-    if let Err(e) = run() {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-    let repo = Repo::open(&cli.repo)?;
-
+fn main() -> Result<()> {
+    // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    stdout.execute(EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = (|| -> anyhow::Result<()> {
-        let mut app = App::new(repo)?;
-        app.run(&mut terminal)?;
-        Ok(())
-    })();
+    // Create and run app
+    let repo_path = std::env::current_dir()?;
+    let mut app = app::App::new(&repo_path)?;
+    let res = app.run(&mut terminal);
 
-    // Always restore terminal
-    let mut restore = || -> anyhow::Result<()> {
-        disable_raw_mode()?;
-        terminal.backend_mut().execute(LeaveAlternateScreen)?;
-        Ok(())
-    };
+    // Restore terminal
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
 
-    if let Err(e) = restore() {
-        eprintln!("Failed to restore terminal: {}", e);
-    }
-
-    result
+    res
 }

@@ -1,43 +1,78 @@
-use super::shell;
-use super::{GitError, Repo, StashEntry};
+use super::Repository;
+use anyhow::Result;
 
-impl Repo {
-    pub fn stash_save(&mut self, msg: &str, include_untracked: bool) -> Result<(), GitError> {
-        shell::stash_save(&self.path, msg, include_untracked)
-    }
+#[derive(Debug, Clone)]
+pub struct StashEntry {
+    pub index: usize,
+    pub hash: String,
+    pub message: String,
+}
 
-    pub fn stash_pop(&mut self, index: usize) -> Result<(), GitError> {
-        shell::stash_pop(&self.path, index)
-    }
-
-    pub fn stash_apply(&mut self, index: usize) -> Result<(), GitError> {
-        shell::stash_apply(&self.path, index)
-    }
-
-    pub fn stash_drop(&mut self, index: usize) -> Result<(), GitError> {
-        shell::stash_drop(&self.path, index)
-    }
-
-    pub fn stash_list(&mut self) -> Result<Vec<StashEntry>, GitError> {
-        let output = shell::stash_list(&self.path)?;
+impl Repository {
+    pub fn stash_list(&self) -> Result<Vec<StashEntry>> {
+        let output = self.git_cmd(&["stash", "list"])?;
         let mut entries = Vec::new();
-
         for line in output.lines() {
+            if line.is_empty() {
+                continue;
+            }
             // Format: stash@{0}: On branch: message
-            if let Some(rest) = line.strip_prefix("stash@{") {
-                if let Some(brace_end) = rest.find("}: ") {
-                    if let Ok(idx) = rest[..brace_end].parse::<usize>() {
-                        let colon_pos = rest.find("}: ").unwrap();
-                        let msg = &rest[colon_pos + 3..];
-                        entries.push(StashEntry {
-                            index: idx,
-                            message: msg.to_string(),
-                        });
+            if let Some(colon_pos) = line.find(':') {
+                let prefix = &line[..colon_pos];
+                let rest = &line[colon_pos + 1..];
+                // Extract index from "stash@{N}"
+                let index = if let Some(start) = prefix.find('{') {
+                    if let Some(end) = prefix.find('}') {
+                        prefix[start + 1..end].parse::<usize>().unwrap_or(0)
+                    } else {
+                        0
                     }
-                }
+                } else {
+                    0
+                };
+                let message = rest.trim().to_string();
+                let hash = self
+                    .git_cmd(&["rev-parse", &format!("stash@{{{}}}", index)])
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                entries.push(StashEntry {
+                    index,
+                    hash,
+                    message,
+                });
             }
         }
-
         Ok(entries)
+    }
+
+    pub fn stash_create(&self, message: Option<&str>) -> Result<String> {
+        let args = if let Some(msg) = message {
+            vec!["stash", "push", "-m", msg]
+        } else {
+            vec!["stash", "push"]
+        };
+        let output = self.git_cmd(
+            &args.iter().map(|s| *s).collect::<Vec<&str>>(),
+        )?;
+        Ok(output)
+    }
+
+    pub fn stash_pop(&self, index: usize) -> Result<String> {
+        let refname = format!("stash@{{{}}}", index);
+        let output = self.git_cmd(&["stash", "pop", &refname])?;
+        Ok(output)
+    }
+
+    pub fn stash_apply(&self, index: usize) -> Result<String> {
+        let refname = format!("stash@{{{}}}", index);
+        let output = self.git_cmd(&["stash", "apply", &refname])?;
+        Ok(output)
+    }
+
+    pub fn stash_drop(&self, index: usize) -> Result<String> {
+        let refname = format!("stash@{{{}}}", index);
+        let output = self.git_cmd(&["stash", "drop", &refname])?;
+        Ok(output)
     }
 }

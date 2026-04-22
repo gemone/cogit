@@ -1,79 +1,51 @@
-use super::shell;
-use super::{GitError, Repo, ShelveInfo};
-use std::fs;
+use super::Repository;
+use anyhow::Result;
 
-impl Repo {
-    fn shelves_dir(&self) -> std::path::PathBuf {
-        self.path.join(".cogit").join("shelves")
-    }
+#[derive(Debug, Clone)]
+pub struct ShelveEntry {
+    pub name: String,
+    pub date: String,
+}
 
-    fn ensure_shelves_dir(&self) -> Result<(), GitError> {
-        let dir = self.shelves_dir();
-        if !dir.exists() {
-            fs::create_dir_all(&dir)?;
-        }
-        Ok(())
-    }
-
-    pub fn shelve(&self, name: &str, paths: &[&str]) -> Result<(), GitError> {
-        self.ensure_shelves_dir()?;
-
-        // Generate diff using git CLI
-        let patch = shell::diff_to_file(&self.path, paths)?;
-
-        let file_path = self.shelves_dir().join(format!("{}.patch", name));
-        fs::write(&file_path, &patch)?;
-
-        // Reset the working tree for the given paths
-        shell::checkout_paths(&self.path, paths)?;
-
-        Ok(())
-    }
-
-    pub fn unshelve(&self, name: &str) -> Result<(), GitError> {
-        let file_path = self.shelves_dir().join(format!("{}.patch", name));
-        if !file_path.exists() {
-            return Err(GitError::ShelveNotFound(name.to_string()));
-        }
-        let patch = fs::read(&file_path)?;
-        shell::apply_patch(&self.path, &patch)?;
-        fs::remove_file(&file_path)?;
-        Ok(())
-    }
-
-    pub fn delete_shelve(&self, name: &str) -> Result<(), GitError> {
-        let file_path = self.shelves_dir().join(format!("{}.patch", name));
-        if !file_path.exists() {
-            return Err(GitError::ShelveNotFound(name.to_string()));
-        }
-        fs::remove_file(&file_path)?;
-        Ok(())
-    }
-
-    pub fn list_shelves(&self) -> Result<Vec<ShelveInfo>, GitError> {
-        let dir = self.shelves_dir();
-        if !dir.exists() {
-            return Ok(Vec::new());
-        }
-        let mut shelves = Vec::new();
-        for entry in fs::read_dir(&dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if let Some(stem) = name.strip_suffix(".patch") {
-                let meta = entry.metadata().ok();
-                let created_at = meta
-                    .and_then(|m| m.created().ok())
-                    .map(|t| {
-                        chrono::DateTime::<chrono::Local>::from(t)
-                            .format("%Y-%m-%d %H:%M:%S")
-                            .to_string()
-                    });
-                shelves.push(ShelveInfo {
-                    name: stem.to_string(),
-                    created_at,
-                });
+impl Repository {
+    pub fn list_shelves(&self) -> Result<Vec<ShelveEntry>> {
+        // Git doesn't have native "shelves" - we implement via refs
+        let output = self
+            .git_cmd(&["for-each-ref", "--format=%(refname:short) %(creatordate:short)", "refs/shelves/"])
+            .unwrap_or_default();
+        let mut entries = Vec::new();
+        for line in output.lines() {
+            if line.is_empty() {
+                continue;
             }
+            let parts: Vec<&str> = line.splitn(2, ' ').collect();
+            let name = parts[0].trim_start_matches("shelves/").to_string();
+            let date = parts.get(1).unwrap_or(&"").to_string();
+            entries.push(ShelveEntry { name, date });
         }
-        Ok(shelves)
+        Ok(entries)
+    }
+
+    pub fn shelve_apply(&self, name: &str) -> Result<String> {
+        let refname = format!("shelves/{}", name);
+        let output = self.git_cmd(&["cherry-pick", &refname])?;
+        Ok(output)
+    }
+
+    pub fn shelve_drop(&self, name: &str) -> Result<String> {
+        let refname = format!("refs/shelves/{}", name);
+        let output = self.git_cmd(&["update-ref", "-d", &refname])?;
+        Ok(output)
+    }
+
+    pub fn shelve_create(&self, name: &str) -> Result<String> {
+        let refname = format!("refs/shelves/{}", name);
+        let output = self.git_cmd(&["stash", "create"])?;
+        let hash = output.trim();
+        if hash.is_empty() {
+            anyhow::bail!("Nothing to shelve");
+        }
+        self.git_cmd(&["update-ref", &refname, hash])?;
+        Ok(format!("Created shelve: {}", name))
     }
 }

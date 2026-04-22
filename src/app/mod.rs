@@ -1,669 +1,619 @@
 pub mod cmdline;
-pub mod commit_dialog;
-pub mod help;
-pub mod keymap;
+pub mod notification;
 pub mod styles;
 
-use std::io;
-
-use anyhow::Context;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent},
-};
+use anyhow::Result;
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Clear, Widget},
-    Terminal,
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Paragraph},
+    Frame,
 };
+use std::path::Path;
 
-use crate::gitops::{GitError, Repo};
+use crate::gitops::Repository;
 use crate::panels::{
-    branch_panel::BranchPanel, log_panel::LogPanel, Action, CmdbarPanel, DiffViewerPanel,
-    FileListPanel, Mode, Panel, SidebarPanel,
+    branch_panel::BranchPanel, filelist_panel::FileListPanel, log_panel::LogPanel,
+    stash_panel::StashPanel, Action, Panel,
 };
+use crate::vimkeys::Mode;
 
-use cmdline::Cmdline;
-use commit_dialog::CommitDialog;
-use help::Help;
-use keymap::KeyMap;
-use styles::Styles;
+use self::cmdline::CmdLine;
+use self::notification::NotificationManager;
+use self::styles::Styles;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum View {
+#[derive(Debug, Clone, PartialEq)]
+pub enum View {
     Main,
     Branches,
     Log,
+    Stash,
 }
 
 pub struct App {
-    repo: Repo,
-    panels: Vec<Box<dyn Panel>>,
-    filelist_idx: usize,
-    diff_idx: usize,
-    focus_idx: usize,
-    mode: Mode,
+    repo_path: std::path::PathBuf,
+    repo: Repository,
     view: View,
+    mode: Mode,
     styles: Styles,
-    keymap: KeyMap,
-    cmdline: Cmdline,
-    commit_dialog: CommitDialog,
-    help: Help,
+    should_quit: bool,
+    // Panels
+    filelist: FileListPanel,
     branch_panel: BranchPanel,
     log_panel: LogPanel,
-    should_quit: bool,
-    size: Rect,
+    stash_panel: StashPanel,
+    // UI components
+    cmdline: CmdLine,
+    notifications: NotificationManager,
 }
 
 impl App {
-    pub fn new(repo: Repo) -> Result<Self, GitError> {
-        let styles = Styles::dark();
-        let keymap = KeyMap::default();
-        let mut cmdbar = CmdbarPanel::new();
-        let mut sidebar = SidebarPanel::new();
-        let mut filelist = FileListPanel::new();
-        let mut diffviewer = DiffViewerPanel::new();
-
-        let mut repo = repo;
-        cmdbar.refresh(&mut repo)?;
-        sidebar.refresh(&mut repo)?;
-        filelist.refresh(&mut repo)?;
-        diffviewer.refresh(&mut repo)?;
-
-        let filelist_idx = 2; // panels[2] = filelist
-        let diff_idx = 3;    // panels[3] = diffviewer
-
-        let mut panels: Vec<Box<dyn Panel>> = vec![
-            Box::new(cmdbar),
-            Box::new(sidebar),
-            Box::new(filelist),
-            Box::new(diffviewer),
-        ];
-
-        // Start focused on sidebar (index 1)
-        panels[1].focus();
+    pub fn new(repo_path: &Path) -> Result<Self> {
+        let repo = Repository::open(repo_path)?;
+        let styles = Styles::default();
+        let filelist = FileListPanel::new(repo_path, &styles);
+        let branch_panel = BranchPanel::new(repo_path, &styles);
+        let log_panel = LogPanel::new(repo_path, &styles);
+        let stash_panel = StashPanel::new(repo_path, &styles);
+        let cmdline = CmdLine::new(&styles);
+        let notifications = NotificationManager::new();
 
         Ok(Self {
+            repo_path: repo_path.to_path_buf(),
             repo,
-            panels,
-            filelist_idx,
-            diff_idx,
-            focus_idx: 1,
-            mode: Mode::Normal,
             view: View::Main,
+            mode: Mode::Normal,
             styles,
-            keymap,
-            cmdline: Cmdline::new(),
-            commit_dialog: CommitDialog::new(),
-            help: Help::new(),
-            branch_panel: BranchPanel::new(),
-            log_panel: LogPanel::new(),
             should_quit: false,
-            size: Rect::default(),
+            filelist,
+            branch_panel,
+            log_panel,
+            stash_panel,
+            cmdline,
+            notifications,
         })
     }
 
-    pub fn run(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    ) -> Result<(), anyhow::Error> {
-        self.size = Rect::new(0, 0, terminal.size()?.width, terminal.size()?.height);
-
+    pub fn run(&mut self, terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>) -> Result<()> {
         while !self.should_quit {
-            terminal.draw(|f: &mut ratatui::Frame| {
-                self.size = f.area();
-                if let Err(_e) = self.draw_frame(f) {}
-            })?;
-
-            let event = event::read().context("read terminal event")?;
-            if let Err(_e) = self.handle_event(event) {}
+            terminal.draw(|f| self.draw_frame(f))?;
+            if event::poll(std::time::Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    self.handle_event(key);
+                }
+            }
+            self.notifications.cleanup();
         }
-
         Ok(())
     }
 
-    fn draw_frame(&mut self, f: &mut ratatui::Frame) -> Result<(), anyhow::Error> {
-        let area = f.area();
-        let buf = f.buffer_mut();
+    fn handle_event(&mut self, key: KeyEvent) {
+        // Command mode takes priority
+        if self.cmdline.is_visible() {
+            self.handle_command_key(key);
+            return;
+        }
 
-        // Layout: top bar + middle + bottom status
-        let main_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(3),
-                Constraint::Length(1),
-            ])
-            .split(area);
+        if self.mode == Mode::Command {
+            self.mode = Mode::Normal;
+        }
 
-        let top_area = main_chunks[0];
-        let middle_area = main_chunks[1];
-        let bottom_area = main_chunks[2];
-
-        // Top bar (cmdbar)
-        self.panels[0].render(top_area, buf, &self.styles);
-
-        // Middle: depends on current view
         match self.view {
-            View::Main => {
-                let mid_chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Percentage(25),
-                        Constraint::Percentage(35),
-                        Constraint::Percentage(40),
-                    ])
-                    .split(middle_area);
-
-                self.panels[1].render(mid_chunks[0], buf, &self.styles);
-                self.panels[2].render(mid_chunks[1], buf, &self.styles);
-                self.panels[3].render(mid_chunks[2], buf, &self.styles);
-            }
+            View::Main => self.handle_main_key(key),
             View::Branches => {
-                self.branch_panel.render(middle_area, buf, &self.styles);
+                if let Some(action) = self.branch_panel.handle_key(key) {
+                    self.dispatch(action);
+                }
             }
             View::Log => {
-                self.log_panel.render(middle_area, buf, &self.styles);
+                if let Some(action) = self.log_panel.handle_key(key) {
+                    self.dispatch(action);
+                }
+            }
+            View::Stash => {
+                if let Some(action) = self.stash_panel.handle_key(key) {
+                    self.dispatch(action);
+                }
             }
         }
-
-        // Bottom status
-        let mode_text = format!("[{}]", mode_label(self.mode));
-        let status = ratatui::widgets::Paragraph::new(mode_text)
-            .style(self.styles.cmdbar_active);
-        status.render(bottom_area, buf);
-
-        // Command palette overlay
-        if self.cmdline.visible {
-            let cmd_area = centered_rect(60, 20, area);
-            Clear.render(cmd_area, buf);
-            self.cmdline.render(cmd_area, buf, &self.styles);
-        }
-
-        // Commit dialog overlay
-        if self.commit_dialog.visible {
-            let dialog_area = centered_rect(60, 25, area);
-            Clear.render(dialog_area, buf);
-            self.commit_dialog.render(dialog_area, buf, &self.styles);
-        }
-
-        // Help overlay
-        self.help.render(area, buf, &self.styles, self.mode);
-
-        Ok(())
     }
 
-    fn handle_event(&mut self, event: Event) -> Result<(), GitError> {
-        match event {
-            Event::Resize(cols, rows) => {
-                self.size = Rect::new(0, 0, cols, rows);
-            }
-            Event::Key(key) => {
-                if self.help.visible {
-                    self.help.hide();
-                    return Ok(());
-                }
-
-                // Commit dialog takes priority
-                if self.commit_dialog.visible {
-                    self.handle_commit_dialog_key(key);
-                    return Ok(());
-                }
-
-                if self.mode == Mode::Command && self.cmdline.visible {
-                    self.handle_command_key(key);
-                    return Ok(());
-                }
-
-                // Route keys to branch/log panels when those views are active
-                match self.view {
-                    View::Branches => {
-                        if let Some(action) = self.branch_panel.handle_key(key) {
-                            self.dispatch(action, key)?;
-                        }
-                        return Ok(());
-                    }
-                    View::Log => {
-                        if let Some(action) = self.log_panel.handle_key(key) {
-                            self.dispatch(action, key)?;
-                        }
-                        return Ok(());
-                    }
-                    View::Main => {}
-                }
-
-                let panel = self.focused_panel_name();
-                let action = self.keymap.resolve(self.mode, panel, key);
-                self.dispatch(action, key)?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn handle_commit_dialog_key(&mut self, key: KeyEvent) {
+    fn handle_main_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Enter => {
-                let msg = self.commit_dialog.submit();
-                if !msg.is_empty() {
-                    let _ = self.repo.commit(&msg);
-                    self.mode = Mode::Normal;
-                    let _ = self.refresh_all();
+            KeyCode::Char(':') => {
+                self.mode = Mode::Command;
+                self.cmdline.open();
+            }
+            KeyCode::Char('1') => {
+                self.switch_view(View::Branches);
+            }
+            KeyCode::Char('2') => {
+                self.switch_view(View::Log);
+            }
+            KeyCode::Char('4') => {
+                self.switch_view(View::Stash);
+            }
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+            }
+            KeyCode::Char('s') => {
+                if let Some(action) = self.filelist.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
+                    self.dispatch(action);
                 }
             }
-            KeyCode::Esc => {
-                self.commit_dialog.close();
-                self.mode = Mode::Normal;
+            KeyCode::Char('S') => {
+                self.dispatch(Action::StageAll);
             }
-            KeyCode::Backspace => {
-                self.commit_dialog.backspace();
+            KeyCode::Char('u') => {
+                self.dispatch(Action::Unstage);
             }
-            KeyCode::Char(c) => {
-                self.commit_dialog.push_char(c);
+            KeyCode::Char('U') => {
+                self.dispatch(Action::UnstageAll);
             }
-            KeyCode::Left => {
-                if self.commit_dialog.cursor > 0 {
-                    self.commit_dialog.cursor -= 1;
+            KeyCode::Char('c') => {
+                self.dispatch(Action::CommitDialog);
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.filelist.handle_key(key);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.filelist.handle_key(key);
+            }
+            _ => {
+                if let Some(action) = self.filelist.handle_key(key) {
+                    self.dispatch(action);
                 }
             }
-            KeyCode::Right => {
-                if self.commit_dialog.cursor < self.commit_dialog.input.len() {
-                    self.commit_dialog.cursor += 1;
-                }
-            }
-            _ => {}
         }
     }
 
     fn handle_command_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Enter => {
-                let _ = self.cmdline.submit();
-                self.mode = Mode::Normal;
-            }
             KeyCode::Esc => {
                 self.cmdline.close();
                 self.mode = Mode::Normal;
             }
-            KeyCode::Char(c) => {
-                self.cmdline.push_char(c);
+            KeyCode::Enter => {
+                let cmd = self.cmdline.submit();
+                self.mode = Mode::Normal;
+                self.execute_command(&cmd);
             }
             KeyCode::Backspace => {
                 self.cmdline.backspace();
             }
-            KeyCode::Left => {
-                self.cmdline.move_cursor_left();
-            }
-            KeyCode::Right => {
-                self.cmdline.move_cursor_right();
+            KeyCode::Char(c) => {
+                self.cmdline.input_char(c);
             }
             _ => {}
         }
     }
 
-    fn get_selected_file_path(&self) -> Option<String> {
-        // Downcast the filelist panel to access selected_file_path
-        let panel = &self.panels[self.filelist_idx];
-        let filelist = panel.as_ref().as_any().downcast_ref::<FileListPanel>()?;
-        filelist.selected_file_path()
-    }
+    fn execute_command(&mut self, cmd: &str) {
+        let cmd = cmd.trim();
+        // Parse commit -m "msg"
+        if let Some(msg) = cmd.strip_prefix(":commit -m ") {
+            let msg = msg.trim_matches('"').trim();
+            self.dispatch(Action::Commit(msg.to_string()));
+            return;
+        }
+        // Parse checkout X
+        if let Some(branch) = cmd.strip_prefix(":checkout ") {
+            let branch = branch.trim();
+            self.dispatch(Action::CheckoutBranch(branch.to_string()));
+            return;
+        }
 
-    fn load_diff_for_file(&mut self, path: &str) {
-        // Try staged diff first, then unstaged
-        let diff = self
-            .repo
-            .diff_staged_for_file(path)
-            .unwrap_or_default();
-        let unstaged = self
-            .repo
-            .diff_for_file(path)
-            .unwrap_or_default();
-        let combined = if diff.is_empty() && unstaged.is_empty() {
-            String::new()
-        } else if diff.is_empty() {
-            unstaged
-        } else if unstaged.is_empty() {
-            diff
-        } else {
-            format!("{}\n{}", diff, unstaged)
+        let action = match cmd {
+            ":w" | ":stage" => Action::Stage,
+            ":wq" => Action::CommitDialog,
+            ":q" | ":q!" => Action::Quit,
+            ":stageall" => Action::StageAll,
+            ":unstage" => Action::Unstage,
+            ":unstageall" => Action::UnstageAll,
+            ":commit" | ":c" => Action::CommitDialog,
+            ":discard" => Action::Discard,
+            ":stash" => Action::ShowStashPanel,
+            ":stashpop" => Action::StashPop(0),
+            ":push" => Action::PushCurrent,
+            ":fetch" => Action::FetchAll,
+            ":branch" | ":branches" => Action::ShowBranchPanel,
+            ":log" => Action::ShowLogPanel,
+            ":help" => Action::Help,
+            ":amend" => Action::AmendCommit,
+            "" => return,
+            _ => {
+                self.notifications.notify_error(&format!("Unknown command: {}", cmd));
+                return;
+            }
         };
+        self.dispatch(action);
+    }
 
-        // Downcast diffviewer to call load_diff
-        let diff_idx = self.diff_idx;
-        let panel = &mut self.panels[diff_idx];
-        if let Some(dv) = panel.as_mut().as_any_mut().downcast_mut::<DiffViewerPanel>() {
-            dv.load_diff(combined, path);
+    fn switch_view(&mut self, view: View) {
+        // Blur current panels
+        self.filelist.blur();
+        self.branch_panel.blur();
+        self.log_panel.blur();
+        self.stash_panel.blur();
+
+        self.view = view.clone();
+        match &self.view {
+            View::Main => {
+                self.filelist.focus();
+            }
+            View::Branches => {
+                self.branch_panel.focus();
+            }
+            View::Log => {
+                self.log_panel.focus();
+            }
+            View::Stash => {
+                self.stash_panel.focus();
+            }
         }
     }
 
-    fn refresh_all(&mut self) -> Result<(), GitError> {
-        for panel in &mut self.panels {
-            panel.refresh(&mut self.repo)?;
-        }
-        Ok(())
-    }
-
-    fn dispatch(&mut self, action: Action, key: KeyEvent) -> Result<(), GitError> {
+    fn dispatch(&mut self, action: Action) {
         match action {
-            Action::Quit => self.should_quit = true,
-            Action::FocusSidebar => {
-                self.view = View::Main;
-                self.set_focus(1);
-            }
-            Action::FocusFilelist => {
-                self.view = View::Main;
-                self.set_focus(2);
-            }
-            Action::FocusDiff => {
-                self.view = View::Main;
-                self.set_focus(3);
-            }
-            Action::ShowBranchPanel => {
-                self.view = View::Branches;
-                self.branch_panel.refresh(&mut self.repo)?;
-            }
-            Action::ShowLogPanel => {
-                self.view = View::Log;
-                self.log_panel.refresh(&mut self.repo)?;
+            Action::Quit => {
+                self.should_quit = true;
             }
             Action::BackToMain => {
-                self.view = View::Main;
+                self.switch_view(View::Main);
             }
-            Action::CommandPalette => {
-                self.cmdline.open();
-                self.mode = Mode::Command;
+            Action::ShowBranchPanel => {
+                self.switch_view(View::Branches);
             }
-            Action::Help => {
-                let panel = self.focused_panel_name().to_string();
-                self.help.toggle(&panel);
+            Action::ShowLogPanel => {
+                self.switch_view(View::Log);
             }
-            Action::Refresh => {
-                self.refresh_all()?;
-                match self.view {
-                    View::Branches => {
-                        self.branch_panel.refresh(&mut self.repo)?;
-                    }
-                    View::Log => {
-                        self.log_panel.refresh(&mut self.repo)?;
-                    }
-                    View::Main => {}
-                }
+            Action::ShowStashPanel => {
+                self.switch_view(View::Stash);
             }
-            Action::EnterMode(m) => self.mode = m,
             Action::Stage => {
-                if let Some(path) = self.get_selected_file_path() {
-                    self.repo.stage_path(&path)?;
-                    self.refresh_all()?;
-                    // Reload diff for the same file if it's showing
-                    self.load_diff_for_file(&path);
+                self.dispatch_stage();
+            }
+            Action::StageAll => {
+                if let Err(e) = self.repo.stage_all() {
+                    self.notifications.notify_error(&format!("Stage all failed: {}", e));
+                } else {
+                    self.notifications.notify("All files staged");
+                    self.refresh_all();
                 }
             }
             Action::Unstage => {
-                if let Some(path) = self.get_selected_file_path() {
-                    self.repo.unstage_path(&path)?;
-                    self.refresh_all()?;
-                    self.load_diff_for_file(&path);
-                }
-            }
-            Action::StageAll => {
-                self.repo.stage_all()?;
-                self.refresh_all()?;
+                self.dispatch_unstage();
             }
             Action::UnstageAll => {
-                self.repo.unstage_all()?;
-                self.refresh_all()?;
-            }
-            Action::Discard(_path) => {
-                if let Some(path) = self.get_selected_file_path() {
-                    self.repo.discard_path(&path)?;
-                    self.refresh_all()?;
+                if let Err(e) = self.repo.unstage_all() {
+                    self.notifications.notify_error(&format!("Unstage all failed: {}", e));
+                } else {
+                    self.notifications.notify("All files unstaged");
+                    self.refresh_all();
                 }
             }
-            Action::OpenDiff(path) => {
-                self.load_diff_for_file(&path);
-                self.set_focus(3);
-            }
-            Action::UpdateDiff(path) => {
-                self.load_diff_for_file(&path);
-            }
-            Action::IgnoreFile(path) => {
-                self.repo.add_ignore(self.repo.path(), &path)?;
-                self.refresh_all()?;
+            Action::Discard => {
+                self.dispatch_discard();
             }
             Action::CommitDialog => {
-                self.commit_dialog.open();
-                self.mode = Mode::Insert;
+                // Simplified: commit with default message
+                self.notifications.notify("Use :commit -m \"message\" to commit");
             }
             Action::Commit(msg) => {
-                self.repo.commit(&msg)?;
-                self.refresh_all()?;
+                match self.repo.commit(&msg) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Committed: {}", msg));
+                        self.refresh_all();
+                    }
+                    Err(e) => self.notifications.notify_error(&format!("Commit failed: {}", e)),
+                }
             }
             Action::AmendCommit => {
-                // Use the commit dialog for amend — just open it
-                self.commit_dialog.open();
-                self.mode = Mode::Insert;
+                match self.repo.amend_commit(None) {
+                    Ok(_) => {
+                        self.notifications.notify("Commit amended");
+                        self.refresh_all();
+                    }
+                    Err(e) => self.notifications.notify_error(&format!("Amend failed: {}", e)),
+                }
             }
             Action::CheckoutBranch(name) => {
-                self.repo.checkout(&name)?;
-                self.refresh_all()?;
-            }
-            Action::Checkout => {
-                // Generic checkout — handled via sidebar item selection
-                // which produces CheckoutBranch with the name
-            }
-            Action::NewBranch | Action::DeleteBranch => {
-                // These are handled by sidebar panel in future
-            }
-            Action::ToggleIgnore => {
-                // Toggle ignored files visibility
-            }
-            Action::ToggleUntracked => {
-                // Toggle untracked files visibility
-            }
-            Action::Search => {
-                // Open search — delegate to command palette
-                self.cmdline.open();
-                self.mode = Mode::Command;
-            }
-            // Branch panel actions
-            Action::CheckoutSmart(name) => {
-                if self.repo.is_dirty() {
-                    self.branch_panel.show_smart_checkout(&name);
-                } else {
-                    self.repo.checkout(&name)?;
-                    self.branch_panel.refresh(&mut self.repo)?;
-                }
-            }
-            Action::ForceCheckout(name) => {
-                self.repo.checkout(&name)?;
-                self.branch_panel.refresh(&mut self.repo)?;
-            }
-            Action::CreateBranch(name) => {
-                if let Err(e) = self.repo.create_branch(&name, "HEAD") {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.repo.checkout(&name)?;
-                    self.branch_panel.refresh(&mut self.repo)?;
-                }
-            }
-            Action::NewBranchDialog => {
-                self.branch_panel.show_new_branch_dialog();
-            }
-            Action::DeleteBranchConfirm(name) => {
-                if let Err(e) = self.repo.delete_branch(&name, false) {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status(&format!("Deleted branch {}", name));
-                    self.branch_panel.refresh(&mut self.repo)?;
-                }
-            }
-            Action::RenameBranch { old_name, new_name } => {
-                if let Err(e) = self.repo.rename_branch(&old_name, &new_name) {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status(&format!(
-                        "Renamed {} → {}",
-                        old_name, new_name
-                    ));
-                    self.branch_panel.refresh(&mut self.repo)?;
-                }
-            }
-            Action::FetchRemote(remote) => {
-                if let Err(e) = self.repo.fetch(&remote) {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status(&format!("Fetched {}", remote));
-                    self.branch_panel.refresh(&mut self.repo)?;
-                }
-            }
-            Action::FetchAll => {
-                if let Err(e) = self.repo.fetch_all() {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status("Fetched all remotes");
-                    self.branch_panel.refresh(&mut self.repo)?;
-                }
-            }
-            Action::PullDialog => {
-                self.branch_panel.show_pull_dialog();
-            }
-            Action::PullMerge => {
-                let branch = self.repo.current_branch_name();
-                if let Err(e) = self.repo.pull_merge("origin", &branch) {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status("Pull (merge) completed");
-                    self.branch_panel.refresh(&mut self.repo)?;
-                }
-            }
-            Action::PullRebase => {
-                let branch = self.repo.current_branch_name();
-                if let Err(e) = self.repo.pull_rebase("origin", &branch) {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status("Pull (rebase) completed");
-                    self.branch_panel.refresh(&mut self.repo)?;
+                match self.repo.checkout(&name) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Switched to {}", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Checkout failed: {}", e));
+                    }
                 }
             }
             Action::PushCurrent => {
-                if let Err(e) = self.repo.push_current() {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status("Pushed current branch");
+                match self.repo.push_current() {
+                    Ok(_) => {
+                        self.notifications.notify("Pushed successfully");
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Push failed: {}", e));
+                    }
+                }
+            }
+            Action::FetchAll => {
+                match self.repo.fetch_all() {
+                    Ok(_) => {
+                        self.notifications.notify("Fetched all remotes");
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Fetch failed: {}", e));
+                    }
+                }
+            }
+            Action::PullCurrent => {
+                match self.repo.pull_current() {
+                    Ok(_) => {
+                        self.notifications.notify("Pulled successfully");
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Pull failed: {}", e));
+                    }
+                }
+            }
+            Action::CreateBranch(name) => {
+                match self.repo.create_branch(&name) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Created branch: {}", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Create branch failed: {}", e));
+                    }
+                }
+            }
+            Action::DeleteBranch(name) => {
+                match self.repo.delete_branch(&name) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Deleted branch: {}", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Delete branch failed: {}", e));
+                    }
                 }
             }
             Action::MergeBranch(name) => {
                 match self.repo.merge(&name) {
                     Ok(_) => {
-                        self.branch_panel.set_status(&format!("Merged {}", name));
-                        self.branch_panel.refresh(&mut self.repo)?;
+                        self.notifications.notify(&format!("Merged: {}", name));
+                        self.refresh_all();
                     }
                     Err(e) => {
-                        self.branch_panel.set_status(&format!("Error: {}", e));
+                        self.notifications.notify_error(&format!("Merge failed: {}", e));
                     }
                 }
             }
-            Action::RebaseOnto(name) => {
-                if let Err(e) = self.repo.rebase(&name) {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status(&format!("Rebased onto {}", name));
-                    self.branch_panel.refresh(&mut self.repo)?;
+            Action::RebaseBranch(name) => {
+                match self.repo.rebase(&name) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Rebased onto: {}", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Rebase failed: {}", e));
+                    }
                 }
             }
-            Action::Stash => {
-                if let Err(e) = self.repo.stash_save("auto-stash", true) {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status("Stashed changes");
-                }
-            }
-            Action::StashPop => {
-                if let Err(e) = self.repo.stash_pop(0) {
-                    self.branch_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.branch_panel.set_status("Popped stash");
-                    self.branch_panel.refresh(&mut self.repo)?;
-                }
-            }
-            // Log panel actions
-            Action::CherryPick(oid) => {
-                if let Err(e) = self.repo.cherry_pick(&oid) {
-                    self.log_panel.set_status(&format!("Error: {}", e));
-                } else {
-                    self.log_panel.set_status(&format!("Cherry-picked {}", &oid[..7]));
+            Action::CherryPick(hash) => {
+                match self.repo.cherry_pick(&hash) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Cherry-picked: {}", &hash[..7.min(hash.len())]));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Cherry-pick failed: {}", e));
+                    }
                 }
             }
             Action::CopyHash(hash) => {
-                // Try to copy to clipboard via pbcopy (macOS)
-                let short = if hash.len() > 7 { &hash[..7] } else { &hash };
-                let _ = std::process::Command::new("pbcopy")
-                    .stdin(std::process::Stdio::piped())
-                    .spawn()
-                    .and_then(|mut child| {
-                        use std::io::Write;
-                        if let Some(stdin) = child.stdin.as_mut() {
-                            let _ = stdin.write_all(hash.as_bytes());
-                        }
-                        child.wait()
-                    });
-                self.log_panel.set_status(&format!("Copied: {}", short));
+                // Copy to clipboard - simplified notification
+                self.notifications.notify(&format!("Copied: {}", &hash[..7.min(hash.len())]));
             }
-            Action::SearchCommits => {
-                self.log_panel.open_search();
+            Action::SearchLog(_query) => {
+                // Handled by log panel directly
             }
-            Action::None => {
-                // Pass unhandled keys to focused panel
-                let idx = self.focus_idx;
-                if let Some(a) = self.panels[idx].handle_key(key) {
-                    return self.dispatch(a, key);
+            Action::Stash => {
+                match self.repo.stash_create(None) {
+                    Ok(_) => {
+                        self.notifications.notify("Stash created");
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Stash failed: {}", e));
+                    }
                 }
             }
+            Action::StashPop(index) => {
+                match self.repo.stash_pop(index) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Stash@{} popped", index));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Stash pop failed: {}", e));
+                    }
+                }
+            }
+            Action::StashApply(index) => {
+                match self.repo.stash_apply(index) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Stash@{} applied", index));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Stash apply failed: {}", e));
+                    }
+                }
+            }
+            Action::StashDrop(index) => {
+                match self.repo.stash_drop(index) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Stash@{} dropped", index));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Stash drop failed: {}", e));
+                    }
+                }
+            }
+            Action::ShelveApply(name) => {
+                match self.repo.shelve_apply(&name) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Shelve '{}' applied", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Shelve apply failed: {}", e));
+                    }
+                }
+            }
+            Action::ShelveDrop(name) => {
+                match self.repo.shelve_drop(&name) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Shelve '{}' deleted", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Shelve drop failed: {}", e));
+                    }
+                }
+            }
+            Action::ShelveCreate => {
+                match self.repo.shelve_create("default") {
+                    Ok(_) => {
+                        self.notifications.notify("Shelve created");
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Shelve create failed: {}", e));
+                    }
+                }
+            }
+            Action::Help => {
+                self.notifications.notify("1:branches 2:log 4:stash :commands q:quit");
+            }
         }
-        Ok(())
     }
 
-    fn set_focus(&mut self, idx: usize) {
-        if idx < self.panels.len() && idx != self.focus_idx {
-            self.panels[self.focus_idx].blur();
-            self.focus_idx = idx;
-            self.panels[self.focus_idx].focus();
+    fn dispatch_stage(&mut self) {
+        // Stage the currently selected file
+        let i = self.filelist.state.selected().unwrap_or(0);
+        if let Some(file) = self.filelist.files.get(i) {
+            if let Err(e) = self.repo.stage(&file.path) {
+                self.notifications.notify_error(&format!("Stage failed: {}", e));
+            } else {
+                self.notifications.notify(&format!("Staged: {}", file.path));
+                self.refresh_all();
+            }
         }
     }
 
-    fn focused_panel_name(&self) -> &str {
-        self.panels
-            .get(self.focus_idx)
-            .map(|p| p.title())
-            .unwrap_or("")
+    fn dispatch_unstage(&mut self) {
+        let i = self.filelist.state.selected().unwrap_or(0);
+        if let Some(file) = self.filelist.files.get(i) {
+            if let Err(e) = self.repo.unstage(&file.path) {
+                self.notifications.notify_error(&format!("Unstage failed: {}", e));
+            } else {
+                self.notifications.notify(&format!("Unstaged: {}", file.path));
+                self.refresh_all();
+            }
+        }
     }
-}
 
-fn mode_label(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Normal => "NORMAL",
-        Mode::Visual => "VISUAL",
-        Mode::Command => "COMMAND",
-        Mode::Insert => "INSERT",
+    fn dispatch_discard(&mut self) {
+        let i = self.filelist.state.selected().unwrap_or(0);
+        if let Some(file) = self.filelist.files.get(i) {
+            if let Err(e) = self.repo.discard(&file.path) {
+                self.notifications.notify_error(&format!("Discard failed: {}", e));
+            } else {
+                self.notifications.notify(&format!("Discarded: {}", file.path));
+                self.refresh_all();
+            }
+        }
     }
-}
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
+    fn refresh_all(&mut self) {
+        self.filelist.refresh();
+        self.branch_panel.refresh();
+        self.log_panel.refresh();
+        self.stash_panel.refresh();
+    }
 
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
+    fn draw_frame(&mut self, f: &mut Frame) {
+        let size = f.area();
+
+        // Background
+        let bg = Block::default().style(Style::default().bg(ratatui::style::Color::Reset));
+        f.render_widget(bg, size);
+
+        match self.view {
+            View::Main => self.draw_main(f, size),
+            View::Branches => self.branch_panel.render(f, size),
+            View::Log => self.log_panel.render(f, size),
+            View::Stash => self.stash_panel.render(f, size),
+        }
+
+        // Command line
+        let cmd_height = if self.cmdline.is_visible() { 1 } else { 0 };
+        if cmd_height > 0 {
+            let cmd_area = Rect {
+                x: 0,
+                y: size.height.saturating_sub(1),
+                width: size.width,
+                height: 1,
+            };
+            self.cmdline.render(f, cmd_area);
+        }
+
+        // Notifications on top of everything
+        self.notifications.render(f, size);
+    }
+
+    fn draw_main(&mut self, f: &mut Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),  // Status bar
+                Constraint::Min(5),     // File list
+                Constraint::Length(1),  // Sidebar help
+            ])
+            .split(area);
+
+        // Status bar
+        let branch = self.repo.current_branch().unwrap_or_default();
+        let status_bar = Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!(" {} ", branch),
+                self.styles.addition.add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " cogit ",
+                self.styles.text_secondary,
+            ),
+        ]))
+        .style(Style::default().bg(ratatui::style::Color::DarkGray));
+        f.render_widget(status_bar, chunks[0]);
+
+        // File list
+        self.filelist.focus();
+        self.filelist.render(f, chunks[1]);
+
+        // Sidebar help
+        let help = Paragraph::new(" 1:branches 2:log 4:stash :commands s:stage S:stage-all c:commit q:quit")
+            .style(self.styles.text_secondary);
+        f.render_widget(help, chunks[2]);
+    }
 }

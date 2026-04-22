@@ -1,350 +1,239 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{
+    layout::{Constraint, Layout, Rect},
+    style::Modifier,
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Frame,
+};
 use std::any::Any;
 
-use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::{
-    buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
-};
-
+use super::{Action, Panel};
 use crate::app::styles::Styles;
-use crate::gitops::{CommitInfo, GitError, Repo};
-use crate::panels::{Action, Mode, Panel};
-use crate::vimkeys::{self, parse_key_event};
+use crate::gitops::types::CommitDetail;
+use crate::gitops::Repository;
 
 pub struct LogPanel {
-    commits: Vec<CommitInfo>,
-    cursor: usize,
-    offset: usize,
-    detail_text: Vec<String>,
-    diff_text: Vec<String>,
-    show_full_diff: bool,
-    search_visible: bool,
-    search_input: String,
-    search_cursor: usize,
-    filtering: bool,
-    filtered_indices: Vec<usize>,
+    repo: std::path::PathBuf,
+    focused: bool,
+    state: ListState,
+    commits: Vec<crate::gitops::types::CommitInfo>,
+    selected_detail: Option<CommitDetail>,
+    styles: Styles,
+    search_mode: bool,
+    search_query: String,
 }
 
 impl LogPanel {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(repo: &std::path::Path, styles: &Styles) -> Self {
+        let mut state = ListState::default();
+        state.select(Some(0));
+        let mut panel = Self {
+            repo: repo.to_path_buf(),
+            focused: false,
+            state,
             commits: Vec::new(),
-            cursor: 0,
-            offset: 0,
-            detail_text: vec!["(no commit selected)".to_string()],
-            diff_text: Vec::new(),
-            show_full_diff: false,
-            search_visible: false,
-            search_input: String::new(),
-            search_cursor: 0,
-            filtering: false,
-            filtered_indices: Vec::new(),
-        }
+            selected_detail: None,
+            styles: styles.clone(),
+            search_mode: false,
+            search_query: String::new(),
+        };
+        panel.refresh();
+        panel
     }
 
-    pub fn open_search(&mut self) {
-        self.search_visible = true;
-        self.search_input.clear();
-        self.search_cursor = 0;
-    }
-
-    fn close_search(&mut self) {
-        self.search_visible = false;
-    }
-
-    fn push_search_char(&mut self, c: char) {
-        self.search_input.insert(self.search_cursor, c);
-        self.search_cursor += 1;
-    }
-
-    fn search_backspace(&mut self) {
-        if self.search_cursor > 0 {
-            self.search_cursor -= 1;
-            self.search_input.remove(self.search_cursor);
-        }
-    }
-
-    fn apply_search(&mut self) {
-        if self.search_input.is_empty() {
-            self.filtering = false;
-            self.filtered_indices.clear();
-        } else {
-            self.filtering = true;
-            let query = self.search_input.to_lowercase();
-            self.filtered_indices = self
-                .commits
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| {
-                    c.subject.to_lowercase().contains(&query)
-                        || c.author.to_lowercase().contains(&query)
-                        || c.hash.contains(&query)
-                })
-                .map(|(i, _)| i)
-                .collect();
-        }
-        self.cursor = 0;
-        self.offset = 0;
-        self.search_visible = false;
-    }
-
-    fn effective_commits(&self) -> Vec<(usize, &CommitInfo)> {
-        if self.filtering {
-            self.filtered_indices
-                .iter()
-                .filter_map(|&i| self.commits.get(i).map(|c| (i, c)))
-                .collect()
-        } else {
-            self.commits
-                .iter()
-                .enumerate()
-                .collect()
-        }
-    }
-
-    fn effective_len(&self) -> usize {
-        if self.filtering {
-            self.filtered_indices.len()
-        } else {
-            self.commits.len()
-        }
-    }
-
-    fn clamp_offset(&mut self, visible_height: usize) {
-        let total = self.effective_len();
-        if total == 0 {
-            self.offset = 0;
-            return;
-        }
-        if self.cursor < self.offset {
-            self.offset = self.cursor;
-        }
-        if self.cursor >= self.offset + visible_height {
-            self.offset = self.cursor - visible_height + 1;
-        }
-    }
-
-    fn get_commit_at_cursor(&self) -> Option<CommitInfo> {
-        let effective = self.effective_commits();
-        effective.get(self.cursor).map(|(_, c)| (*c).clone())
-    }
-
-    fn load_detail(&mut self, repo: &mut Repo) {
-        let commit_opt = self.get_commit_at_cursor();
-        if let Some(commit) = commit_opt {
-            let detail = repo.show_commit(&commit.oid).unwrap_or_default();
-            self.detail_text = detail.lines().map(|l| l.to_string()).collect();
-            if self.show_full_diff {
-                let diff = repo.diff_commit(&commit.oid).unwrap_or_default();
-                self.diff_text = diff.lines().map(|l| l.to_string()).collect();
-            } else {
-                self.diff_text.clear();
-            }
-        } else {
-            self.detail_text = vec!["(no commit selected)".to_string()];
-            self.diff_text.clear();
-        }
-    }
-
-    pub fn set_status(&mut self, _msg: &str) {
-        // Could display a status bar; for now this is a no-op placeholder
+    fn selected_hash(&self) -> Option<String> {
+        let i = self.state.selected().unwrap_or(0);
+        self.commits.get(i).map(|c| c.hash.clone())
     }
 }
 
 impl Panel for LogPanel {
-    fn focus(&mut self) {}
-    fn blur(&mut self) {}
+    fn focus(&mut self) {
+        self.focused = true;
+        self.refresh();
+    }
 
-    fn render(&self, area: Rect, buf: &mut Buffer, styles: &Styles) {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+    fn blur(&mut self) {
+        self.focused = false;
+    }
+
+    fn render(&mut self, f: &mut Frame, area: Rect) {
+        let border_style = if self.focused {
+            self.styles.border_active
+        } else {
+            self.styles.border_inactive
+        };
+
+        let chunks = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
 
-        // Left: commit list
-        let effective = self.effective_commits();
-        let visible_height = cols[0].height.saturating_sub(2) as usize;
-        let mut lines: Vec<Line> = Vec::new();
-        let start = self.offset;
-        let end = (start + visible_height).min(effective.len());
-        for i in start..end {
-            let (_, commit) = &effective[i];
-            let is_sel = i == self.cursor;
-            let style = if is_sel {
-                styles.selection
-            } else {
-                Style::default()
-            };
-            let hash_span = Span::styled(
-                format!("{:<8} ", commit.hash),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            );
-            let author_span = Span::styled(
-                truncate_str(&commit.author, 12),
-                Style::default().fg(Color::Cyan),
-            );
-            let date_span = Span::styled(
-                format!(" {}", truncate_str(&commit.date, 10)),
-                Style::default().fg(Color::DarkGray),
-            );
-            let subj_span = Span::styled(
-                format!(" {}", truncate_str(&commit.subject, 40)),
-                if is_sel { style } else { Style::default() },
-            );
-            lines.push(Line::from(vec![hash_span, author_span, date_span, subj_span]));
-        }
+        // Commit list
+        let title = if self.search_mode {
+            format!(" Log [search: {}] ", self.search_query)
+        } else {
+            " Log ".to_string()
+        };
 
-        let list_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(styles.header)
-            .title(" Log ");
-        Paragraph::new(lines)
-            .block(list_block)
-            .render(cols[0], buf);
+        let items: Vec<ListItem> = self
+            .commits
+            .iter()
+            .map(|c| {
+                let line = Line::from(vec![
+                    Span::styled(
+                        format!("{} ", c.short_hash),
+                        self.styles.addition.add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(&c.subject, self.styles.text_primary),
+                ]);
+                ListItem::new(line)
+            })
+            .collect();
 
-        // Right: detail + diff
-        let mut detail_lines: Vec<Line> = Vec::new();
-        for l in &self.detail_text {
-            detail_lines.push(Line::from(Span::raw(l.as_str())));
-        }
-        if !self.diff_text.is_empty() {
-            detail_lines.push(Line::from(""));
-            for l in &self.diff_text {
-                let style = if l.starts_with('+') && !l.starts_with("++") {
-                    Style::default().fg(Color::Green)
-                } else if l.starts_with('-') && !l.starts_with("--") {
-                    Style::default().fg(Color::Red)
-                } else if l.starts_with("@@") {
-                    Style::default().fg(Color::Magenta)
-                } else {
-                    Style::default()
-                };
-                detail_lines.push(Line::from(Span::styled(l.as_str(), style)));
-            }
-        }
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(border_style),
+            )
+            .highlight_style(self.styles.highlight);
 
-        let detail_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(styles.header)
-            .title(if self.show_full_diff {
-                " Commit Detail + Diff "
-            } else {
-                " Commit Detail "
-            });
-        Paragraph::new(detail_lines)
-            .block(detail_block)
-            .render(cols[1], buf);
+        f.render_stateful_widget(list, chunks[0], &mut self.state);
 
-        // Search bar overlay
-        if self.search_visible {
-            let search_area = Rect::new(
-                area.x + 1,
-                area.bottom().saturating_sub(2),
-                area.width.saturating_sub(2),
-                1,
-            );
-            let prompt = format!("/{}", &self.search_input);
-            Paragraph::new(Line::from(Span::styled(
-                prompt,
-                Style::default().fg(Color::Yellow),
-            )))
-            .render(search_area, buf);
-        }
+        // Commit detail
+        let detail_text = if let Some(ref detail) = self.selected_detail {
+            let info = &detail.info;
+            vec![
+                Line::from(vec![
+                    Span::styled("Hash: ", self.styles.text_secondary),
+                    Span::styled(&info.hash, self.styles.text_primary),
+                ]),
+                Line::from(vec![
+                    Span::styled("Author: ", self.styles.text_secondary),
+                    Span::styled(
+                        format!("{} <{}>", info.author_name, info.author_email),
+                        self.styles.text_primary,
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("Date: ", self.styles.text_secondary),
+                    Span::styled(&info.date, self.styles.text_primary),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(&info.subject, self.styles.text_primary),
+                ]),
+                Line::from(detail.body.clone()),
+            ]
+        } else {
+            vec![Line::from("Select a commit")]
+        };
+
+        let detail_widget = Paragraph::new(detail_text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Detail ")
+                    .border_style(border_style),
+            )
+            .scroll((0, 0));
+
+        f.render_widget(detail_widget, chunks[1]);
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
-        // If search is open, handle search input
-        if self.search_visible {
+        if self.search_mode {
             match key.code {
-                KeyCode::Enter => {
-                    self.apply_search();
-                }
                 KeyCode::Esc => {
-                    self.close_search();
+                    self.search_mode = false;
+                    self.search_query.clear();
+                    self.refresh();
+                    return None;
                 }
-                KeyCode::Backspace => {
-                    self.search_backspace();
+                KeyCode::Enter => {
+                    self.search_mode = false;
+                    return None;
                 }
                 KeyCode::Char(c) => {
-                    self.push_search_char(c);
+                    self.search_query.push(c);
+                    self.refresh();
+                    return None;
                 }
-                _ => {}
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    self.refresh();
+                    return None;
+                }
+                _ => return None,
             }
-            return Some(Action::None);
         }
-
-        let visible_height = 20usize;
-        let total = self.effective_len();
-
-        if let Some(motion) = parse_key_event(key, Mode::Normal) {
-            match motion {
-                vimkeys::Motion::Up(n) => {
-                    self.cursor = self.cursor.saturating_sub(n);
-                    self.clamp_offset(visible_height);
-                }
-                vimkeys::Motion::Down(n) => {
-                    if total > 0 {
-                        self.cursor = (self.cursor + n).min(total - 1);
-                        self.clamp_offset(visible_height);
-                    }
-                }
-                vimkeys::Motion::Top => {
-                    self.cursor = 0;
-                    self.offset = 0;
-                }
-                vimkeys::Motion::Bottom => {
-                    if total > 0 {
-                        self.cursor = total - 1;
-                        self.clamp_offset(visible_height);
-                    }
-                }
-                _ => {}
-            }
-            return Some(Action::None);
-        }
-
-        // Extract commit data at cursor before any mutations
-        let cursor_commit = self.get_commit_at_cursor();
 
         match key.code {
-            KeyCode::Enter => {
-                self.show_full_diff = !self.show_full_diff;
-                Some(Action::None)
+            KeyCode::Char('j') | KeyCode::Down => {
+                let len = self.commits.len();
+                if len > 0 {
+                    let i = self.state.selected().unwrap_or(0);
+                    let new_i = (i + 1).min(len - 1);
+                    self.state.select(Some(new_i));
+                    self.load_detail();
+                }
+                None
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let i = self.state.selected().unwrap_or(0);
+                self.state.select(Some(i.saturating_sub(1)));
+                self.load_detail();
+                None
+            }
+            KeyCode::Char('G') => {
+                if !self.commits.is_empty() {
+                    self.state.select(Some(self.commits.len() - 1));
+                    self.load_detail();
+                }
+                None
+            }
+            KeyCode::Char('g') => {
+                self.state.select(Some(0));
+                self.load_detail();
+                None
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let i = self.state.selected().unwrap_or(0);
+                self.state.select(Some(i.saturating_sub(10)));
+                self.load_detail();
+                None
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let len = self.commits.len();
+                if len > 0 {
+                    let i = self.state.selected().unwrap_or(0);
+                    self.state.select(Some((i + 10).min(len - 1)));
+                    self.load_detail();
+                }
+                None
             }
             KeyCode::Char('y') => {
-                if let Some(commit) = cursor_commit {
-                    return Some(Action::CopyHash(commit.oid));
+                if let Some(hash) = self.selected_hash() {
+                    Some(Action::CopyHash(hash))
+                } else {
+                    None
                 }
-                Some(Action::None)
             }
-            KeyCode::Char('x') => {
-                if let Some(commit) = cursor_commit {
-                    return Some(Action::CherryPick(commit.oid));
+            KeyCode::Char('c') => {
+                if let Some(hash) = self.selected_hash() {
+                    Some(Action::CherryPick(hash))
+                } else {
+                    None
                 }
-                Some(Action::None)
-            }
-            KeyCode::Char('r') => {
-                if let Some(commit) = cursor_commit {
-                    return Some(Action::RebaseOnto(commit.hash));
-                }
-                Some(Action::None)
             }
             KeyCode::Char('/') => {
-                self.open_search();
-                Some(Action::SearchCommits)
+                self.search_mode = true;
+                None
             }
-            KeyCode::Char('f') => {
-                self.open_search();
-                Some(Action::SearchCommits)
-            }
-            KeyCode::Tab => {
-                return Some(Action::BackToMain);
-            }
+            KeyCode::Char('q') | KeyCode::Esc => Some(Action::BackToMain),
             _ => None,
         }
     }
@@ -353,12 +242,20 @@ impl Panel for LogPanel {
         "Log"
     }
 
-    fn refresh(&mut self, repo: &mut Repo) -> Result<(), GitError> {
-        self.commits = repo.log_detailed(200)?;
-        self.cursor = 0;
-        self.offset = 0;
-        self.load_detail(repo);
-        Ok(())
+    fn refresh(&mut self) {
+        if let Ok(repo) = Repository::open(&self.repo) {
+            if self.search_query.is_empty() {
+                self.commits = repo.log(100).unwrap_or_default();
+            } else {
+                self.commits = repo.log_search(&self.search_query, 100).unwrap_or_default();
+            }
+        }
+        if self.commits.is_empty() {
+            self.state.select(None);
+        } else if self.state.selected().unwrap_or(0) >= self.commits.len() {
+            self.state.select(Some(0));
+        }
+        self.load_detail();
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -370,12 +267,14 @@ impl Panel for LogPanel {
     }
 }
 
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        let mut result = s[..max_len.saturating_sub(1)].to_string();
-        result.push('…');
-        result
+impl LogPanel {
+    fn load_detail(&mut self) {
+        if let Some(hash) = self.selected_hash() {
+            if let Ok(repo) = Repository::open(&self.repo) {
+                self.selected_detail = repo.show_commit(&hash).ok();
+            }
+        } else {
+            self.selected_detail = None;
+        }
     }
 }
