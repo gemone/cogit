@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -9,6 +9,7 @@ use ratatui::{
 use std::any::Any;
 
 use super::{Action, Panel};
+use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
 
@@ -143,65 +144,21 @@ impl Panel for BranchPanel {
             }
         }
 
+        // Handle navigation with the shared helper
+        if handle_list_navigation(&mut self.state, self.filtered_indices.len(), key.code) {
+            return None;
+        }
+
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                let len = self.filtered_indices.len();
-                if len > 0 {
-                    let i = self.state.selected().unwrap_or(0);
-                    self.state.select(Some((i + 1).min(len - 1)));
-                }
-                None
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                let i = self.state.selected().unwrap_or(0);
-                self.state.select(Some(i.saturating_sub(1)));
-                None
-            }
-            KeyCode::Char('G') => {
-                if !self.filtered_indices.is_empty() {
-                    self.state.select(Some(self.filtered_indices.len() - 1));
-                }
-                None
-            }
-            KeyCode::Char('g') => {
-                self.state.select(Some(0));
-                None
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let i = self.state.selected().unwrap_or(0);
-                self.state.select(Some(i.saturating_sub(10)));
-                None
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let len = self.filtered_indices.len();
-                if len > 0 {
-                    let i = self.state.selected().unwrap_or(0);
-                    self.state.select(Some((i + 10).min(len - 1)));
-                }
-                None
-            }
-            KeyCode::Enter => {
-                self.current_branch_name().map(Action::CheckoutBranch)
-            }
-            KeyCode::Char('n') => {
-                // Create branch - open dialog
-                Some(Action::CreateBranchDialog)
-            }
-            KeyCode::Char('R') => {
-                self.current_branch_name().map(Action::RenameBranchDialog)
-            }
-            KeyCode::Char('d') => {
-                self.current_branch_name().map(Action::DeleteBranch)
-            }
+            KeyCode::Enter => self.current_branch_name().map(Action::CheckoutBranch),
+            KeyCode::Char('n') => Some(Action::CreateBranchDialog),
+            KeyCode::Char('R') => self.current_branch_name().map(Action::RenameBranchDialog),
+            KeyCode::Char('d') => self.current_branch_name().map(Action::DeleteBranch),
             KeyCode::Char('f') => Some(Action::FetchAll),
             KeyCode::Char('p') => Some(Action::PushCurrent),
             KeyCode::Char('P') => Some(Action::PullCurrent),
-            KeyCode::Char('m') => {
-                self.current_branch_name().map(Action::MergeBranch)
-            }
-            KeyCode::Char('r') => {
-                self.current_branch_name().map(Action::RebaseBranch)
-            }
+            KeyCode::Char('m') => self.current_branch_name().map(Action::MergeBranch),
+            KeyCode::Char('r') => self.current_branch_name().map(Action::RebaseBranch),
             KeyCode::Char('/') => {
                 self.search_mode = true;
                 None
