@@ -52,6 +52,7 @@ pub struct App {
     diff_popup: Option<(String, String, u16)>, // (path, content, scroll)
     commit_dialog: Option<String>,             // commit message input
     branch_dialog: Option<String>,              // branch name input
+    reset_dialog: Option<(String, String, bool)>, // (mode, path, selecting_mode)
     help_overlay: HelpOverlay,
 }
 
@@ -83,6 +84,7 @@ impl App {
             diff_popup: None,
             commit_dialog: None,
             branch_dialog: None,
+            reset_dialog: None,
             help_overlay,
         })
     }
@@ -188,6 +190,55 @@ impl App {
                 }
                 KeyCode::Char(c) => {
                     name.push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Reset dialog takes priority (for Ctrl+u in filelist)
+        if let Some(ref mut reset_state) = self.reset_dialog {
+            match key.code {
+                KeyCode::Esc => {
+                    self.reset_dialog = None;
+                }
+                KeyCode::Enter => {
+                    let (mode, path, _) = std::mem::take(reset_state);
+                    self.reset_dialog = None;
+                    if !mode.is_empty() {
+                        self.dispatch(Action::Reset(mode, path));
+                    }
+                }
+                KeyCode::Char('1') => {
+                    // soft
+                    reset_state.0 = "soft".to_string();
+                    reset_state.2 = false;
+                }
+                KeyCode::Char('2') => {
+                    // hard
+                    reset_state.0 = "hard".to_string();
+                    reset_state.2 = false;
+                }
+                KeyCode::Char('3') => {
+                    // mixed (default)
+                    reset_state.0 = "mixed".to_string();
+                    reset_state.2 = false;
+                }
+                KeyCode::Backspace => {
+                    if reset_state.2 {
+                        self.reset_dialog = None;
+                    } else if reset_state.1.is_empty() {
+                        reset_state.2 = true;
+                    } else {
+                        reset_state.1.pop();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    if reset_state.2 {
+                        reset_state.2 = false;
+                        reset_state.1.clear();
+                    }
+                    reset_state.1.push(c);
                 }
                 _ => {}
             }
@@ -328,6 +379,20 @@ impl App {
             }
             return;
         }
+        // Parse reset [path] [soft|hard|mixed]
+        if let Some(args) = cmd.strip_prefix(":reset ") {
+            let parts: Vec<&str> = args.split_whitespace().collect();
+            let (mode, path) = match parts.as_slice() {
+                [] => ("mixed".to_string(), "".to_string()),
+                [m] if *m == "soft" || *m == "hard" || *m == "mixed" => (m.to_string(), "".to_string()),
+                [p] => ("mixed".to_string(), p.to_string()),
+                [m, p] if *m == "soft" || *m == "hard" || *m == "mixed" => (m.to_string(), p.to_string()),
+                [p, m] if *m == "soft" || *m == "hard" || *m == "mixed" => (m.to_string(), p.to_string()),
+                _ => ("mixed".to_string(), args.trim().to_string()),
+            };
+            self.dispatch(Action::Reset(mode, path));
+            return;
+        }
 
         let action = match cmd {
             ":w" | ":stage" => Action::Stage,
@@ -337,6 +402,11 @@ impl App {
             ":unstage" => Action::Unstage,
             ":unstageall" => Action::UnstageAll,
             ":commit" | ":c" => Action::CommitDialog,
+            ":reset" => Action::Reset("mixed".to_string(), "".to_string()),
+            ":reset-soft" => Action::Reset("soft".to_string(), "".to_string()),
+            ":reset-hard" => Action::Reset("hard".to_string(), "".to_string()),
+            ":reset-mixed" => Action::Reset("mixed".to_string(), "".to_string()),
+            ":wip" => Action::WipCommit,
             ":discard" => Action::Discard,
             ":stash" => Action::ShowStashPanel,
             ":stashpop" => Action::StashPop(0),
@@ -443,6 +513,33 @@ impl App {
                     .notifications
                     .notify_error(&format!("Commit failed: {}", e)),
             },
+            Action::WipCommit => match self.repo.wip_commit() {
+                Ok(_) => {
+                    self.notifications.notify("WIP commit created");
+                    self.refresh_all();
+                }
+                Err(e) => self
+                    .notifications
+                    .notify_error(&format!("WIP commit failed: {}", e)),
+            },
+            Action::Reset(mode, path) => match self.repo.reset(&mode, &path) {
+                Ok(_) => {
+                    let msg = if path.is_empty() {
+                        format!("Reset {} (whole repo)", mode)
+                    } else {
+                        format!("Reset {} {}", mode, path)
+                    };
+                    self.notifications.notify(&msg);
+                    self.refresh_all();
+                }
+                Err(e) => self
+                    .notifications
+                    .notify_error(&format!("Reset failed: {}", e)),
+            },
+            Action::ResetDialog(mode) => {
+                // Open reset dialog with pre-selected mode
+                self.reset_dialog = Some((mode, String::new(), true));
+            }
             Action::AmendCommit => match self.repo.amend_commit(None) {
                 Ok(_) => {
                     self.notifications.notify("Commit amended");
@@ -789,6 +886,11 @@ impl App {
             self.draw_branch_dialog(f, size, name);
         }
 
+        // Reset dialog overlay
+        if let Some(ref reset_state) = self.reset_dialog {
+            self.draw_reset_dialog(f, size, reset_state);
+        }
+
         // Notifications on top of everything
         self.notifications.render(f, size);
 
@@ -988,6 +1090,76 @@ impl App {
                 .borders(Borders::ALL)
                 .title(" New Branch ")
                 .border_style(Style::default().fg(ratatui::style::Color::Cyan)),
+        );
+        f.render_widget(paragraph, popup_area);
+    }
+
+    fn draw_reset_dialog(&self, f: &mut Frame, area: Rect, reset_state: &(String, String, bool)) {
+        let (mode, path, selecting_mode) = reset_state;
+        let popup_w = (area.width * 3 / 5).max(40);
+        let popup_h = 11;
+        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+        let clear = Block::default().style(
+            Style::default()
+                .bg(ratatui::style::Color::Black)
+                .fg(ratatui::style::Color::White),
+        );
+        f.render_widget(clear, popup_area);
+
+        let path_display = if path.is_empty() && !selecting_mode {
+            "type path (or Enter for whole repo)".to_string()
+        } else if path.is_empty() && *selecting_mode {
+            "type path...".to_string()
+        } else {
+            path.clone()
+        };
+
+        let lines = vec![
+            Line::from(Span::styled(
+                " Reset ",
+                Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Mode: ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                if mode.is_empty() {
+                    Span::styled("1:soft  2:hard  3:mixed", Style::default().fg(ratatui::style::Color::Cyan))
+                } else {
+                    Span::styled(mode.as_str(), Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD))
+                },
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("> Path: ", Style::default().fg(ratatui::style::Color::Yellow)),
+                Span::styled(
+                    &path_display,
+                    if path.is_empty() {
+                        Style::default().fg(ratatui::style::Color::DarkGray)
+                    } else {
+                        Style::default()
+                            .fg(ratatui::style::Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    },
+                ),
+                Span::styled("█", Style::default().fg(ratatui::style::Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  1/2/3: select mode  |  Enter: reset  |  Esc: cancel",
+                Style::default().fg(ratatui::style::Color::DarkGray),
+            )),
+        ];
+
+        let paragraph = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Reset ")
+                .border_style(Style::default().fg(ratatui::style::Color::Red)),
         );
         f.render_widget(paragraph, popup_area);
     }

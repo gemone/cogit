@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -139,8 +139,12 @@ impl Panel for FileListPanel {
                 None
             }
             KeyCode::Char('a') => Some(Action::StageAll),
-            KeyCode::Char('u') => Some(Action::UnstageAll),
             KeyCode::Char('c') => Some(Action::CommitDialog),
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Reset dialog for selected file (mixed mode unstages)
+                Some(Action::ResetDialog("mixed".to_string()))
+            }
+            KeyCode::Char('u') => Some(Action::UnstageAll),
             _ => None,
         }
     }

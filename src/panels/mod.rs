@@ -51,6 +51,11 @@ pub enum Action {
     ShowTags,
     CreateTag(String),
     DeleteTag(String),
+    // Reset
+    Reset(String, String), // path, mode ("soft"|"hard"|"mixed")
+    ResetDialog(String),   // mode for dialog
+    // WIP
+    WipCommit,
 }
 
 pub trait Panel {

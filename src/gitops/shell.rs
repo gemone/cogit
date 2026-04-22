@@ -29,8 +29,37 @@ impl Repository {
         Ok(())
     }
 
+    pub fn reset(&self, mode: &str, path: &str) -> Result<()> {
+        // mode: "soft", "hard", or "mixed"
+        // path: empty string means whole repo, otherwise specific path
+        let mut args = vec!["reset"];
+        match mode {
+            "soft" => args.push("--soft"),
+            "hard" => args.push("--hard"),
+            "mixed" => args.push("--mixed"),
+            _ => args.push("--mixed"), // default to mixed
+        }
+        if !path.is_empty() {
+            args.push("--");
+            args.push(path);
+        }
+        self.git_cmd(&args)?;
+        Ok(())
+    }
+
     pub fn commit(&self, message: &str) -> Result<String> {
         let output = self.git_cmd(&["commit", "-m", message])?;
+        Ok(output)
+    }
+
+    #[allow(dead_code)]
+    pub fn commit_no_verify(&self, message: &str) -> Result<String> {
+        let output = self.git_cmd(&["commit", "--no-verify", "-m", message])?;
+        Ok(output)
+    }
+
+    pub fn wip_commit(&self) -> Result<String> {
+        let output = self.git_cmd(&["commit", "-m", "WIP", "--no-verify"])?;
         Ok(output)
     }
 
