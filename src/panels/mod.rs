@@ -42,11 +42,21 @@ pub enum Action {
     // Branch
     CreateBranch(String),
     CreateBranchDialog,
+    RenameBranch(String, String),
+    RenameBranchDialog(String), // old_name to pass to the dialog
     DeleteBranch(String),
     MergeBranch(String),
     RebaseBranch(String),
     PullCurrent,
     ShowDiff(String),
+    // Diff panel for arbitrary refs
+    ShowRefDiff(String), // "from..to" format
+    // Worktree
+    ShowWorktrees,
+    CreateWorktree(String, String), // path, branch
+    RemoveWorktree(String),
+    // Rebase pull
+    PullRebase,
     // Tags
     ShowTags,
     CreateTag(String),

@@ -50,9 +50,12 @@ pub struct App {
     cmdline: CmdLine,
     notifications: NotificationManager,
     diff_popup: Option<(String, String, u16)>, // (path, content, scroll)
+    ref_diff_popup: Option<(String, String, u16)>, // (title "from..to", content, scroll)
     commit_dialog: Option<String>,             // commit message input
     branch_dialog: Option<String>,              // branch name input
+    rename_dialog: Option<(String, String)>, // (old_name, new_name being typed)
     reset_dialog: Option<(String, String, bool)>, // (mode, path, selecting_mode)
+    pending_checkout: Option<String>, // branch name waiting for stash confirmation
     help_overlay: HelpOverlay,
 }
 
@@ -82,9 +85,12 @@ impl App {
             cmdline,
             notifications,
             diff_popup: None,
+            ref_diff_popup: None,
             commit_dialog: None,
             branch_dialog: None,
+            rename_dialog: None,
             reset_dialog: None,
+            pending_checkout: None,
             help_overlay,
         })
     }
@@ -105,6 +111,47 @@ impl App {
     }
 
     fn handle_event(&mut self, key: KeyEvent) {
+        // Ref diff popup takes priority
+        if self.ref_diff_popup.is_some() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.ref_diff_popup = None;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
+                        *scroll = scroll.saturating_add(1);
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
+                        *scroll = scroll.saturating_sub(1);
+                    }
+                }
+                KeyCode::Char('G') => {
+                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
+                        *scroll = u16::MAX;
+                    }
+                }
+                KeyCode::Char('g') => {
+                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
+                        *scroll = 0;
+                    }
+                }
+                KeyCode::PageDown | KeyCode::Char('J') => {
+                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
+                        *scroll = scroll.saturating_add(15);
+                    }
+                }
+                KeyCode::PageUp | KeyCode::Char('K') => {
+                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
+                        *scroll = scroll.saturating_sub(15);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Diff popup takes priority
         if self.diff_popup.is_some() {
             match key.code {
@@ -190,6 +237,28 @@ impl App {
                 }
                 KeyCode::Char(c) => {
                     name.push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Rename dialog takes priority
+        if let Some(ref mut rename_state) = self.rename_dialog {
+            match key.code {
+                KeyCode::Esc => {
+                    self.rename_dialog = None;
+                }
+                KeyCode::Enter => {
+                    let (old_name, new_name) = std::mem::take(rename_state);
+                    self.rename_dialog = None;
+                    self.dispatch(Action::RenameBranch(old_name, new_name));
+                }
+                KeyCode::Backspace => {
+                    rename_state.1.pop();
+                }
+                KeyCode::Char(c) => {
+                    rename_state.1.push(c);
                 }
                 _ => {}
             }
@@ -393,6 +462,56 @@ impl App {
             self.dispatch(Action::Reset(mode, path));
             return;
         }
+        // Parse diff <ref1> <ref2>
+        if let Some(args) = cmd.strip_prefix(":diff ") {
+            let args = args.trim();
+            // Support both "ref1..ref2" and "ref1 ref2" formats
+            let range = if args.contains("..") {
+                args.to_string()
+            } else {
+                let parts: Vec<&str> = args.split_whitespace().collect();
+                if parts.len() == 2 {
+                    format!("{}..{}", parts[0], parts[1])
+                } else {
+                    self.notifications.notify_error("Usage: :diff <ref1> <ref2> or :diff <ref1>..<ref2>");
+                    return;
+                }
+            };
+            self.dispatch(Action::ShowRefDiff(range));
+            return;
+        }
+        // Parse rename-branch <old> <new>
+        if let Some(args) = cmd.strip_prefix(":rename-branch ") {
+            let parts: Vec<&str> = args.split_whitespace().collect();
+            if parts.len() == 2 {
+                self.dispatch(Action::RenameBranch(parts[0].to_string(), parts[1].to_string()));
+            } else {
+                self.notifications.notify_error("Usage: :rename-branch <old_name> <new_name>");
+            }
+            return;
+        }
+        // Parse worktree add <path> <branch>
+        if let Some(args) = cmd.strip_prefix(":worktree add ") {
+            let parts: Vec<&str> = args.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let path = parts[0].to_string();
+                let branch = if parts.len() > 1 { parts[1] } else { "HEAD" };
+                self.dispatch(Action::CreateWorktree(path, branch.to_string()));
+            } else {
+                self.notifications.notify_error("Usage: :worktree add <path> <branch>");
+            }
+            return;
+        }
+        // Parse worktree remove <path>
+        if let Some(path) = cmd.strip_prefix(":worktree remove ") {
+            let path = path.trim();
+            if !path.is_empty() {
+                self.dispatch(Action::RemoveWorktree(path.to_string()));
+            } else {
+                self.notifications.notify_error("Usage: :worktree remove <path>");
+            }
+            return;
+        }
 
         let action = match cmd {
             ":w" | ":stage" => Action::Stage,
@@ -417,6 +536,8 @@ impl App {
             ":help" => Action::Help,
             ":amend" => Action::AmendCommit,
             ":tag" | ":tags" => Action::ShowTags,
+            ":worktrees" => Action::ShowWorktrees,
+            ":pull-rebase" | ":rebase-pull" => Action::PullRebase,
             "" => return,
             _ => {
                 self.notifications
@@ -784,6 +905,91 @@ impl App {
                     .unwrap_or_else(|e| format!("Error: {}", e));
                 self.diff_popup = Some((path, content, 0));
             }
+            Action::RenameBranchDialog(old_name) => {
+                // Open rename dialog with (old_name, empty_input)
+                self.rename_dialog = Some((old_name, String::new()));
+            }
+            Action::RenameBranch(old_name, new_name) => {
+                if new_name.is_empty() {
+                    self.notifications.notify_error("New branch name cannot be empty");
+                } else {
+                    match self.repo.rename_branch(&old_name, &new_name) {
+                        Ok(_) => {
+                            self.notifications.notify(&format!("Renamed branch: {} -> {}", old_name, new_name));
+                            self.refresh_all();
+                        }
+                        Err(e) => {
+                            self.notifications.notify_error(&format!("Rename failed: {}", e));
+                        }
+                    }
+                }
+            }
+            Action::ShowRefDiff(range) => {
+                // range format is "from..to"
+                let parts: Vec<&str> = range.split("..").collect();
+                if parts.len() == 2 {
+                    let content = self.repo.diff_refs(parts[0], parts[1])
+                        .unwrap_or_else(|e| format!("Error: {}", e));
+                    self.ref_diff_popup = Some((range, content, 0));
+                } else {
+                    self.notifications.notify_error("Invalid ref range format. Use: from..to");
+                }
+            }
+            Action::ShowWorktrees => {
+                match self.repo.worktree_list() {
+                    Ok(worktrees) => {
+                        if worktrees.is_empty() {
+                            self.notifications.notify("No worktrees found");
+                        } else {
+                            let info: Vec<String> = worktrees.iter().map(|w| {
+                                let branch = w.branch.as_deref().unwrap_or("(detached)");
+                                if w.is_main {
+                                    format!("{} (main, branch: {})", w.path, branch)
+                                } else {
+                                    format!("{} (branch: {})", w.path, branch)
+                                }
+                            }).collect();
+                            self.notifications.notify(&format!("Worktrees: {}", info.join("; ")));
+                        }
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to list worktrees: {}", e));
+                    }
+                }
+            }
+            Action::CreateWorktree(path, branch) => {
+                match self.repo.worktree_create(&path, &branch) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Created worktree: {} ({})", path, branch));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Create worktree failed: {}", e));
+                    }
+                }
+            }
+            Action::RemoveWorktree(path) => {
+                match self.repo.worktree_remove(&path) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Removed worktree: {}", path));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Remove worktree failed: {}", e));
+                    }
+                }
+            }
+            Action::PullRebase => {
+                match self.repo.pull_rebase_current() {
+                    Ok(_) => {
+                        self.notifications.notify("Pulled with rebase successfully");
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Pull rebase failed: {}", e));
+                    }
+                }
+            }
         }
     }
 
@@ -884,6 +1090,16 @@ impl App {
         // Branch dialog overlay
         if let Some(ref name) = self.branch_dialog {
             self.draw_branch_dialog(f, size, name);
+        }
+
+        // Rename dialog overlay
+        if let Some(ref rename_state) = self.rename_dialog {
+            self.draw_rename_dialog(f, size, rename_state);
+        }
+
+        // Ref diff popup overlay
+        if let Some((ref title, ref content, scroll)) = self.ref_diff_popup {
+            self.draw_ref_diff_popup(f, size, title, content, &scroll);
         }
 
         // Reset dialog overlay
@@ -1162,5 +1378,113 @@ impl App {
                 .border_style(Style::default().fg(ratatui::style::Color::Red)),
         );
         f.render_widget(paragraph, popup_area);
+    }
+
+    fn draw_rename_dialog(&self, f: &mut Frame, area: Rect, rename_state: &(String, String)) {
+        let (old_name, new_name) = rename_state;
+        let popup_w = (area.width * 3 / 5).max(40);
+        let popup_h = 8;
+        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+        let clear = Block::default().style(
+            Style::default()
+                .bg(ratatui::style::Color::Black)
+                .fg(ratatui::style::Color::White),
+        );
+        f.render_widget(clear, popup_area);
+
+        let input_display = if new_name.is_empty() {
+            "type new branch name...".to_string()
+        } else {
+            new_name.to_string()
+        };
+
+        let lines = vec![
+            Line::from(vec![
+                Span::styled("Rename: ", Style::default().fg(ratatui::style::Color::Cyan)),
+                Span::styled(old_name, Style::default().fg(ratatui::style::Color::Yellow).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  → ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(
+                    input_display,
+                    if new_name.is_empty() {
+                        Style::default().fg(ratatui::style::Color::DarkGray)
+                    } else {
+                        Style::default()
+                            .fg(ratatui::style::Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    },
+                ),
+                Span::styled("█", Style::default().fg(ratatui::style::Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Enter: rename  |  Esc: cancel",
+                Style::default().fg(ratatui::style::Color::DarkGray),
+            )),
+        ];
+
+        let paragraph = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Rename Branch ")
+                .border_style(Style::default().fg(ratatui::style::Color::Cyan)),
+        );
+        f.render_widget(paragraph, popup_area);
+    }
+
+    fn draw_ref_diff_popup(&self, f: &mut Frame, area: Rect, title: &str, content: &str, scroll: &u16) {
+        let popup_w = (area.width * 4 / 5).max(40);
+        let popup_h = (area.height * 4 / 5).max(10);
+        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+        let clear = Block::default().style(
+            Style::default()
+                .bg(ratatui::style::Color::Black)
+                .fg(ratatui::style::Color::White),
+        );
+        f.render_widget(clear, popup_area);
+
+        let inner = Rect {
+            x: popup_area.x + 1,
+            y: popup_area.y + 1,
+            width: popup_area.width.saturating_sub(2),
+            height: popup_area.height.saturating_sub(3),
+        };
+
+        // Color diff lines
+        let lines: Vec<Line> = content
+            .lines()
+            .map(|line| {
+                let style = if line.starts_with('+') && !line.starts_with("+++") {
+                    Style::default().fg(ratatui::style::Color::Green)
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    Style::default().fg(ratatui::style::Color::Red)
+                } else if line.starts_with("@@") {
+                    Style::default().fg(ratatui::style::Color::Cyan)
+                } else {
+                    Style::default().fg(ratatui::style::Color::White)
+                };
+                Line::from(Span::styled(line.to_string(), style))
+            })
+            .collect();
+
+        let title_str = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", title);
+        let paragraph = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title_str.as_str())
+                    .border_style(Style::default().fg(ratatui::style::Color::Yellow)),
+            )
+            .scroll(((*scroll), 0));
+
+        f.render_widget(paragraph, inner);
     }
 }

@@ -187,6 +187,9 @@ impl Panel for BranchPanel {
                 // Create branch - open dialog
                 Some(Action::CreateBranchDialog)
             }
+            KeyCode::Char('R') => {
+                self.current_branch_name().map(Action::RenameBranchDialog)
+            }
             KeyCode::Char('d') => {
                 self.current_branch_name().map(Action::DeleteBranch)
             }

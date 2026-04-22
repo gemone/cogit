@@ -45,6 +45,13 @@ pub struct CommitDetail {
     pub body: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub branch: Option<String>,
+    pub is_main: bool,
+}
+
 impl FileStatus {
     pub fn parse(output: &str) -> Self {
         let mut status = FileStatus::default();

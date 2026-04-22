@@ -104,6 +104,12 @@ impl Repository {
         Ok(output)
     }
 
+    pub fn pull_rebase_current(&self) -> Result<String> {
+        let branch = self.current_branch()?;
+        let output = self.git_cmd(&["pull", "--rebase", "origin", &branch])?;
+        Ok(output)
+    }
+
     #[allow(dead_code)]
     pub fn fetch(&self, remote: &str) -> Result<String> {
         let output = self.git_cmd(&["fetch", remote])?;
@@ -137,6 +143,11 @@ impl Repository {
 
     pub fn delete_branch(&self, name: &str) -> Result<String> {
         let output = self.git_cmd(&["branch", "-d", name])?;
+        Ok(output)
+    }
+
+    pub fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<String> {
+        let output = self.git_cmd(&["branch", "-m", old_name, new_name])?;
         Ok(output)
     }
 
@@ -308,6 +319,73 @@ impl Repository {
         } else {
             Ok(output)
         }
+    }
+
+    pub fn diff_refs(&self, from: &str, to: &str) -> Result<String> {
+        let output = self.git_cmd(&["diff", &format!("{}..{}", from, to)])?;
+        Ok(output)
+    }
+
+    pub fn worktree_list(&self) -> Result<Vec<WorktreeInfo>> {
+        let output = self.git_cmd(&["worktree", "list", "--porcelain"])?;
+        let mut worktrees = Vec::new();
+        let mut current = WorktreeInfo {
+            path: String::new(),
+            branch: None,
+            is_main: false,
+        };
+        let mut in_worktree = false;
+
+        for line in output.lines() {
+            if line.starts_with("worktree ") {
+                if !current.path.is_empty() {
+                    worktrees.push(current);
+                }
+                current = WorktreeInfo {
+                    path: line.strip_prefix("worktree ").unwrap_or(line).to_string(),
+                    branch: None,
+                    is_main: false,
+                };
+                in_worktree = true;
+            } else if line.starts_with("HEAD ") && in_worktree {
+                // HEAD is present only for non-main worktrees
+                current.is_main = false;
+            } else if line.starts_with("branch ") && in_worktree {
+                let branch = line.strip_prefix("refs/heads/").unwrap_or(&line[8..]).to_string();
+                current.branch = Some(branch);
+            } else if line.trim().is_empty() && in_worktree {
+                // Empty line marks end of worktree entry
+                if !current.path.is_empty() {
+                    worktrees.push(current);
+                    current = WorktreeInfo {
+                        path: String::new(),
+                        branch: None,
+                        is_main: false,
+                    };
+                }
+                in_worktree = false;
+            }
+        }
+        if !current.path.is_empty() {
+            worktrees.push(current);
+        }
+
+        // First worktree is always the main one
+        if !worktrees.is_empty() {
+            worktrees[0].is_main = true;
+        }
+
+        Ok(worktrees)
+    }
+
+    pub fn worktree_create(&self, path: &str, branch: &str) -> Result<String> {
+        let output = self.git_cmd(&["worktree", "add", path, branch])?;
+        Ok(output)
+    }
+
+    pub fn worktree_remove(&self, path: &str) -> Result<String> {
+        let output = self.git_cmd(&["worktree", "remove", path])?;
+        Ok(output)
     }
 
     pub(crate) fn git_cmd(&self, args: &[&str]) -> Result<String> {
