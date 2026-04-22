@@ -8,3 +8,4 @@ ratatui = "0.29"
 crossterm = "0.28"
 gix = { version = "0.70", features = ["max-performance"] }
 anyhow = "1"
+arboard = "3.3"

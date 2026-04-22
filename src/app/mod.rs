@@ -51,6 +51,7 @@ pub struct App {
     notifications: NotificationManager,
     diff_popup: Option<(String, String, u16)>, // (path, content, scroll)
     commit_dialog: Option<String>,             // commit message input
+    branch_dialog: Option<String>,              // branch name input
     help_overlay: HelpOverlay,
 }
 
@@ -81,6 +82,7 @@ impl App {
             notifications,
             diff_popup: None,
             commit_dialog: None,
+            branch_dialog: None,
             help_overlay,
         })
     }
@@ -162,6 +164,30 @@ impl App {
                 }
                 KeyCode::Char(c) => {
                     msg.push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Branch dialog takes priority
+        if let Some(ref mut name) = self.branch_dialog {
+            match key.code {
+                KeyCode::Esc => {
+                    self.branch_dialog = None;
+                }
+                KeyCode::Enter => {
+                    let name = std::mem::take(name);
+                    self.branch_dialog = None;
+                    if !name.is_empty() {
+                        self.dispatch(Action::CreateBranch(name));
+                    }
+                }
+                KeyCode::Backspace => {
+                    name.pop();
+                }
+                KeyCode::Char(c) => {
+                    name.push(c);
                 }
                 _ => {}
             }
@@ -294,6 +320,14 @@ impl App {
             self.dispatch(Action::CheckoutBranch(branch.to_string()));
             return;
         }
+        // Parse tag <name> (create tag)
+        if let Some(name) = cmd.strip_prefix(":tag ") {
+            let name = name.trim();
+            if !name.is_empty() {
+                self.dispatch(Action::CreateTag(name.to_string()));
+            }
+            return;
+        }
 
         let action = match cmd {
             ":w" | ":stage" => Action::Stage,
@@ -312,6 +346,7 @@ impl App {
             ":log" => Action::ShowLogPanel,
             ":help" => Action::Help,
             ":amend" => Action::AmendCommit,
+            ":tag" | ":tags" => Action::ShowTags,
             "" => return,
             _ => {
                 self.notifications
@@ -468,6 +503,9 @@ impl App {
                         .notify_error(&format!("Create branch failed: {}", e));
                 }
             },
+            Action::CreateBranchDialog => {
+                self.branch_dialog = Some(String::new());
+            }
             Action::DeleteBranch(name) => match self.repo.delete_branch(&name) {
                 Ok(_) => {
                     self.notifications
@@ -512,13 +550,58 @@ impl App {
                 }
             },
             Action::CopyHash(hash) => {
-                // Copy to clipboard - simplified notification
-                self.notifications
-                    .notify(&format!("Copied: {}", &hash[..7.min(hash.len())]));
+                // Copy to clipboard using arboard
+                use arboard::Clipboard;
+                if let Ok(mut clipboard) = Clipboard::new() {
+                    if clipboard.set_text(&hash).is_ok() {
+                        self.notifications
+                            .notify(&format!("Copied: {}", &hash[..7.min(hash.len())]));
+                    } else {
+                        self.notifications.notify_error("Failed to copy to clipboard");
+                    }
+                } else {
+                    self.notifications.notify_error("Failed to access clipboard");
+                }
             }
             Action::SearchLog(_query) => {
                 // Handled by log panel directly
             }
+            Action::ShowTags => {
+                match self.repo.tag_list() {
+                    Ok(tags) => {
+                        if tags.is_empty() {
+                            self.notifications.notify("No tags found");
+                        } else {
+                            let tag_names: Vec<String> = tags.iter().map(|t| t.name.clone()).collect();
+                            self.notifications.notify(&format!("Tags: {}", tag_names.join(", ")));
+                        }
+                    }
+                    Err(e) => {
+                        self.notifications
+                            .notify_error(&format!("Failed to list tags: {}", e));
+                    }
+                }
+            }
+            Action::CreateTag(name) => match self.repo.tag_create(&name, "", None) {
+                Ok(_) => {
+                    self.notifications.notify(&format!("Created tag: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Create tag failed: {}", e));
+                }
+            },
+            Action::DeleteTag(name) => match self.repo.tag_delete(&name) {
+                Ok(_) => {
+                    self.notifications.notify(&format!("Deleted tag: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Delete tag failed: {}", e));
+                }
+            },
             Action::Stash => match self.repo.stash_create(None) {
                 Ok(_) => {
                     self.notifications.notify("Stash created");
@@ -701,6 +784,11 @@ impl App {
             self.draw_commit_dialog(f, size, msg);
         }
 
+        // Branch dialog overlay
+        if let Some(ref name) = self.branch_dialog {
+            self.draw_branch_dialog(f, size, name);
+        }
+
         // Notifications on top of everything
         self.notifications.render(f, size);
 
@@ -849,6 +937,57 @@ impl App {
                 .borders(Borders::ALL)
                 .title(" Commit ")
                 .border_style(Style::default().fg(ratatui::style::Color::Green)),
+        );
+        f.render_widget(paragraph, popup_area);
+    }
+
+    fn draw_branch_dialog(&self, f: &mut Frame, area: Rect, name: &str) {
+        let popup_w = (area.width * 3 / 5).max(40);
+        let popup_h = 7;
+        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+        let clear = Block::default().style(
+            Style::default()
+                .bg(ratatui::style::Color::Black)
+                .fg(ratatui::style::Color::White),
+        );
+        f.render_widget(clear, popup_area);
+
+        let input_display = if name.is_empty() {
+            "type branch name...".to_string()
+        } else {
+            name.to_string()
+        };
+
+        let lines = vec![
+            Line::from(vec![
+                Span::styled("> ", Style::default().fg(ratatui::style::Color::Yellow)),
+                Span::styled(
+                    input_display,
+                    if name.is_empty() {
+                        Style::default().fg(ratatui::style::Color::DarkGray)
+                    } else {
+                        Style::default()
+                            .fg(ratatui::style::Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    },
+                ),
+                Span::styled("█", Style::default().fg(ratatui::style::Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Enter: create  |  Esc: cancel",
+                Style::default().fg(ratatui::style::Color::DarkGray),
+            )),
+        ];
+
+        let paragraph = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" New Branch ")
+                .border_style(Style::default().fg(ratatui::style::Color::Cyan)),
         );
         f.render_widget(paragraph, popup_area);
     }

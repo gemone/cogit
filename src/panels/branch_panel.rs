@@ -184,8 +184,8 @@ impl Panel for BranchPanel {
                 self.current_branch_name().map(Action::CheckoutBranch)
             }
             KeyCode::Char('n') => {
-                // Create branch - simplified: prompt via Action
-                Some(Action::CreateBranch("new-branch".to_string()))
+                // Create branch - open dialog
+                Some(Action::CreateBranchDialog)
             }
             KeyCode::Char('d') => {
                 self.current_branch_name().map(Action::DeleteBranch)

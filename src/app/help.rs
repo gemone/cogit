@@ -132,6 +132,8 @@ impl HelpOverlay {
             Line::from(vec![Span::styled("  :push / :fetch", key), Span::styled(" sync with remotes", text)]),
             Line::from(vec![Span::styled("  :checkout <branch>", key), Span::styled(" checkout a branch", text)]),
             Line::from(vec![Span::styled("  :amend", key), Span::styled(" amend the last commit", text)]),
+            Line::from(vec![Span::styled("  :tag <name>", key), Span::styled(" create a tag", text)]),
+            Line::from(vec![Span::styled("  :tag / :tags", key), Span::styled(" list all tags", text)]),
             Line::from(vec![Span::styled("  :q / :q!", key), Span::styled(" quit", text)]),
             Line::from(vec![Span::styled("  :w / :wq / :c", key), Span::styled(" stage or commit shortcuts", text)]),
             Line::from(""),

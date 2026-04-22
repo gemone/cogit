@@ -41,11 +41,16 @@ pub enum Action {
     SearchLog(String),
     // Branch
     CreateBranch(String),
+    CreateBranchDialog,
     DeleteBranch(String),
     MergeBranch(String),
     RebaseBranch(String),
     PullCurrent,
     ShowDiff(String),
+    // Tags
+    ShowTags,
+    CreateTag(String),
+    DeleteTag(String),
 }
 
 pub trait Panel {

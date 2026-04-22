@@ -222,6 +222,48 @@ impl Repository {
         Ok(output)
     }
 
+    pub fn tag_list(&self) -> Result<Vec<TagInfo>> {
+        let output = self.git_cmd(&[
+            "tag",
+            "-l",
+            "--format=%(refname:short)|%(objectname)|%(contents:subject)",
+        ])?;
+        let mut tags = Vec::new();
+        for line in output.lines() {
+            let parts: Vec<&str> = line.splitn(3, '|').collect();
+            if !parts.is_empty() && !parts[0].is_empty() {
+                tags.push(TagInfo {
+                    name: parts[0].to_string(),
+                    hash: parts.get(1).unwrap_or(&"").to_string(),
+                    message: parts.get(2).map(|s| s.to_string()),
+                });
+            }
+        }
+        Ok(tags)
+    }
+
+    pub fn tag_create(&self, name: &str, hash: &str, message: Option<&str>) -> Result<String> {
+        let mut args = vec!["tag"];
+        if let Some(msg) = message {
+            args.push("-a");
+            args.push(name);
+            args.push("-m");
+            args.push(msg);
+        } else {
+            args.push(name);
+        }
+        if !hash.is_empty() {
+            args.push(hash);
+        }
+        let output = self.git_cmd(&args)?;
+        Ok(output)
+    }
+
+    pub fn tag_delete(&self, name: &str) -> Result<String> {
+        let output = self.git_cmd(&["tag", "-d", name])?;
+        Ok(output)
+    }
+
     pub fn file_diff(&self, path: &str) -> Result<String> {
         let output = self.git_cmd(&["diff", path]).unwrap_or_default();
         if output.is_empty() {

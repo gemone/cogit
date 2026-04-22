@@ -33,6 +33,13 @@ pub struct CommitInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct TagInfo {
+    pub name: String,
+    pub hash: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct CommitDetail {
     pub info: CommitInfo,
     pub body: String,
