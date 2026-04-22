@@ -181,39 +181,23 @@ impl Panel for BranchPanel {
                 None
             }
             KeyCode::Enter => {
-                if let Some(name) = self.current_branch_name() {
-                    Some(Action::CheckoutBranch(name))
-                } else {
-                    None
-                }
+                self.current_branch_name().map(Action::CheckoutBranch)
             }
             KeyCode::Char('n') => {
                 // Create branch - simplified: prompt via Action
                 Some(Action::CreateBranch("new-branch".to_string()))
             }
             KeyCode::Char('d') => {
-                if let Some(name) = self.current_branch_name() {
-                    Some(Action::DeleteBranch(name))
-                } else {
-                    None
-                }
+                self.current_branch_name().map(Action::DeleteBranch)
             }
             KeyCode::Char('f') => Some(Action::FetchAll),
             KeyCode::Char('p') => Some(Action::PushCurrent),
             KeyCode::Char('P') => Some(Action::PullCurrent),
             KeyCode::Char('m') => {
-                if let Some(name) = self.current_branch_name() {
-                    Some(Action::MergeBranch(name))
-                } else {
-                    None
-                }
+                self.current_branch_name().map(Action::MergeBranch)
             }
             KeyCode::Char('r') => {
-                if let Some(name) = self.current_branch_name() {
-                    Some(Action::RebaseBranch(name))
-                } else {
-                    None
-                }
+                self.current_branch_name().map(Action::RebaseBranch)
             }
             KeyCode::Char('/') => {
                 self.search_mode = true;

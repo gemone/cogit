@@ -150,8 +150,8 @@ impl Panel for FileListPanel {
     }
 
     fn refresh(&mut self) {
-        if let Ok(repo) = Repository::open(&self.repo) {
-            if let Ok(status) = repo.status() {
+        if let Ok(repo) = Repository::open(&self.repo)
+            && let Ok(status) = repo.status() {
                 self.files.clear();
                 for f in &status.staged {
                     self.files.push(FileItem {
@@ -178,7 +178,6 @@ impl Panel for FileListPanel {
                     });
                 }
             }
-        }
         if self.files.is_empty() {
             self.state.select(None);
         } else if self.state.selected().unwrap_or(0) >= self.files.len() {

@@ -91,11 +91,10 @@ impl App {
     ) -> Result<()> {
         while !self.should_quit {
             terminal.draw(|f| self.draw_frame(f))?;
-            if event::poll(std::time::Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
+            if event::poll(std::time::Duration::from_millis(100))?
+                && let Event::Key(key) = event::read()? {
                     self.handle_event(key);
                 }
-            }
             self.notifications.cleanup();
         }
         Ok(())
@@ -743,7 +742,7 @@ impl App {
 
     fn draw_diff_popup(&self, f: &mut Frame, area: Rect, path: &str, content: &str, scroll: u16) {
         // Centered popup: 80% width, 80% height
-        let popup_w = (area.width as u16 * 4 / 5).max(40);
+        let popup_w = (area.width * 4 / 5).max(40);
         let popup_h = (area.height * 4 / 5).max(10);
         let popup_x = (area.width.saturating_sub(popup_w)) / 2;
         let popup_y = (area.height.saturating_sub(popup_h)) / 2;

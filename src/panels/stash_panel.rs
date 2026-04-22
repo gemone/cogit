@@ -309,25 +309,13 @@ impl StashPanel {
                 None
             }
             KeyCode::Enter => {
-                if let Some(idx) = self.selected_stash_index() {
-                    Some(Action::StashPop(idx))
-                } else {
-                    None
-                }
+                self.selected_stash_index().map(Action::StashPop)
             }
             KeyCode::Char('a') => {
-                if let Some(idx) = self.selected_stash_index() {
-                    Some(Action::StashApply(idx))
-                } else {
-                    None
-                }
+                self.selected_stash_index().map(Action::StashApply)
             }
             KeyCode::Char('d') => {
-                if let Some(idx) = self.selected_stash_index() {
-                    Some(Action::StashDrop(idx))
-                } else {
-                    None
-                }
+                self.selected_stash_index().map(Action::StashDrop)
             }
             KeyCode::Char('s') => Some(Action::Stash),
             _ => None,
@@ -374,18 +362,10 @@ impl StashPanel {
                 None
             }
             KeyCode::Enter => {
-                if let Some(name) = self.selected_shelve_name() {
-                    Some(Action::ShelveApply(name))
-                } else {
-                    None
-                }
+                self.selected_shelve_name().map(Action::ShelveApply)
             }
             KeyCode::Char('d') => {
-                if let Some(name) = self.selected_shelve_name() {
-                    Some(Action::ShelveDrop(name))
-                } else {
-                    None
-                }
+                self.selected_shelve_name().map(Action::ShelveDrop)
             }
             _ => None,
         }

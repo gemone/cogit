@@ -214,18 +214,10 @@ impl Panel for LogPanel {
                 None
             }
             KeyCode::Char('y') => {
-                if let Some(hash) = self.selected_hash() {
-                    Some(Action::CopyHash(hash))
-                } else {
-                    None
-                }
+                self.selected_hash().map(Action::CopyHash)
             }
             KeyCode::Char('c') => {
-                if let Some(hash) = self.selected_hash() {
-                    Some(Action::CherryPick(hash))
-                } else {
-                    None
-                }
+                self.selected_hash().map(Action::CherryPick)
             }
             KeyCode::Char('/') => {
                 self.search_mode = true;
