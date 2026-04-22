@@ -1,4 +1,5 @@
 pub mod cmdline;
+pub mod help;
 pub mod notification;
 pub mod styles;
 
@@ -21,6 +22,7 @@ use crate::panels::{
 use crate::vimkeys::Mode;
 
 use self::cmdline::CmdLine;
+use self::help::HelpOverlay;
 use self::notification::NotificationManager;
 use self::styles::Styles;
 
@@ -49,6 +51,7 @@ pub struct App {
     notifications: NotificationManager,
     diff_popup: Option<(String, String, u16)>, // (path, content, scroll)
     commit_dialog: Option<String>,             // commit message input
+    help_overlay: HelpOverlay,
 }
 
 impl App {
@@ -61,6 +64,7 @@ impl App {
         let stash_panel = StashPanel::new(repo_path, &styles);
         let cmdline = CmdLine::new(&styles);
         let notifications = NotificationManager::new();
+        let help_overlay = HelpOverlay::new(&styles);
 
         Ok(Self {
             repo_path: repo_path.to_path_buf(),
@@ -77,6 +81,7 @@ impl App {
             notifications,
             diff_popup: None,
             commit_dialog: None,
+            help_overlay,
         })
     }
 
@@ -164,9 +169,20 @@ impl App {
             return;
         }
 
+        // Help overlay takes priority
+        if self.help_overlay.is_visible() {
+            self.help_overlay.handle_key(key);
+            return;
+        }
+
         // Command mode takes priority
         if self.cmdline.is_visible() {
             self.handle_command_key(key);
+            return;
+        }
+
+        if key.code == KeyCode::Char('?') {
+            self.dispatch(Action::Help);
             return;
         }
 
@@ -211,6 +227,9 @@ impl App {
             }
             KeyCode::Char('q') => {
                 self.should_quit = true;
+            }
+            KeyCode::Char('?') => {
+                self.dispatch(Action::Help);
             }
             KeyCode::Char('s') => {
                 self.dispatch(Action::Stage);
@@ -577,8 +596,7 @@ impl App {
                 }
             },
             Action::Help => {
-                self.notifications
-                    .notify("1:branches 2:log 4:stash :commands q:quit");
+                self.help_overlay.open();
             }
             Action::ShowDiff(path) => {
                 let content = self
@@ -686,6 +704,9 @@ impl App {
 
         // Notifications on top of everything
         self.notifications.render(f, size);
+
+        // Help overlay modal on top of everything
+        self.help_overlay.render(f, size);
     }
 
     fn draw_main(&mut self, f: &mut Frame, area: Rect) {
@@ -714,7 +735,7 @@ impl App {
         self.filelist.focus();
         self.filelist.render(f, chunks[1]);
         let help = Paragraph::new(
-            " 1:branches 2:log 4:stash :commands s:stage S:stage-all c:commit q:quit",
+            " 1:branches 2:log 4:stash ?:help :commands s:stage S:stage-all c:commit q:quit",
         )
         .style(self.styles.text_secondary);
         f.render_widget(help, chunks[2]);
