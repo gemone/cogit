@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use crate::app::styles::Styles;
@@ -71,11 +71,7 @@ impl CmdLine {
         };
 
         let cmd_line = Paragraph::new(display)
-            .style(
-                self.styles
-                    .text_primary
-                    .add_modifier(Modifier::BOLD),
-            )
+            .style(self.styles.text_primary.add_modifier(Modifier::BOLD))
             .block(
                 Block::default()
                     .borders(Borders::NONE)
