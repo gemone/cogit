@@ -1,10 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::Modifier,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 use std::any::Any;
 
@@ -104,8 +104,10 @@ impl Panel for BranchPanel {
         f.render_stateful_widget(list, area, &mut self.state);
 
         // Help text at bottom
-        let help = Paragraph::new("Enter:switch n:new d:delete f:fetch p:push P:pull m:merge r:rebase /:search q:back")
-            .style(self.styles.text_secondary);
+        let help = Paragraph::new(
+            "Enter:switch n:new d:delete f:fetch p:push P:pull m:merge r:rebase /:search q:back",
+        )
+        .style(self.styles.text_secondary);
         let help_area = Rect {
             y: area.bottom().saturating_sub(1),
             height: 1,

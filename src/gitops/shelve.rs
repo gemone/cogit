@@ -11,7 +11,11 @@ impl Repository {
     pub fn list_shelves(&self) -> Result<Vec<ShelveEntry>> {
         // Git doesn't have native "shelves" - we implement via refs
         let output = self
-            .git_cmd(&["for-each-ref", "--format=%(refname:short) %(creatordate:short)", "refs/shelves/"])
+            .git_cmd(&[
+                "for-each-ref",
+                "--format=%(refname:short) %(creatordate:short)",
+                "refs/shelves/",
+            ])
             .unwrap_or_default();
         let mut entries = Vec::new();
         for line in output.lines() {

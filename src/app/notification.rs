@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::Line,
     widgets::Paragraph,
-    Frame,
 };
 use std::time::{Duration, Instant};
 
@@ -76,7 +76,13 @@ impl NotificationManager {
         let max_width = 60.min(area.width as usize);
         let max_visible = 3.min(self.notifications.len());
 
-        for (i, notif) in self.notifications.iter().rev().take(max_visible).enumerate() {
+        for (i, notif) in self
+            .notifications
+            .iter()
+            .rev()
+            .take(max_visible)
+            .enumerate()
+        {
             let style = if notif.is_error {
                 Style::default()
                     .fg(Color::White)

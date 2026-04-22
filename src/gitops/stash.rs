@@ -52,9 +52,7 @@ impl Repository {
         } else {
             vec!["stash", "push"]
         };
-        let output = self.git_cmd(
-            &args.iter().map(|s| *s).collect::<Vec<&str>>(),
-        )?;
+        let output = self.git_cmd(&args.iter().map(|s| *s).collect::<Vec<&str>>())?;
         Ok(output)
     }
 

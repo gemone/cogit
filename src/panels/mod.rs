@@ -3,8 +3,8 @@ pub mod filelist_panel;
 pub mod log_panel;
 pub mod stash_panel;
 
-use ratatui::Frame;
 use crossterm::event::KeyEvent;
+use ratatui::Frame;
 use std::any::Any;
 
 #[derive(Debug, Clone)]

@@ -226,7 +226,9 @@ impl Repository {
         let output = self.git_cmd(&["diff", path]).unwrap_or_default();
         if output.is_empty() {
             // Try cached diff (staged file)
-            let cached = self.git_cmd(&["diff", "--cached", path]).unwrap_or_default();
+            let cached = self
+                .git_cmd(&["diff", "--cached", path])
+                .unwrap_or_default();
             if cached.is_empty() {
                 Ok(format!("(no changes: {})", path))
             } else {

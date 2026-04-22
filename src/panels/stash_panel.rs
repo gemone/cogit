@@ -1,16 +1,16 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
-    Frame,
 };
 use std::any::Any;
 
 use super::{Action, Panel};
 use crate::app::styles::Styles;
-use crate::gitops::{shelve::ShelveEntry, stash::StashEntry, Repository};
+use crate::gitops::{Repository, shelve::ShelveEntry, stash::StashEntry};
 
 #[derive(Debug, Clone, PartialEq)]
 enum StashTab {
@@ -90,16 +90,22 @@ impl Panel for StashPanel {
 
         // Render tabs
         let tab_titles = vec![
-            Span::styled(" Stash ", if self.tab == StashTab::Stash {
-                self.styles.addition.add_modifier(Modifier::BOLD)
-            } else {
-                self.styles.text_secondary
-            }),
-            Span::styled(" Shelve ", if self.tab == StashTab::Shelve {
-                self.styles.addition.add_modifier(Modifier::BOLD)
-            } else {
-                self.styles.text_secondary
-            }),
+            Span::styled(
+                " Stash ",
+                if self.tab == StashTab::Stash {
+                    self.styles.addition.add_modifier(Modifier::BOLD)
+                } else {
+                    self.styles.text_secondary
+                },
+            ),
+            Span::styled(
+                " Shelve ",
+                if self.tab == StashTab::Shelve {
+                    self.styles.addition.add_modifier(Modifier::BOLD)
+                } else {
+                    self.styles.text_secondary
+                },
+            ),
         ];
         let tabs = Tabs::new(tab_titles)
             .block(
@@ -345,7 +351,8 @@ impl StashPanel {
             }
             KeyCode::Char('G') => {
                 if !self.shelve_entries.is_empty() {
-                    self.shelve_state.select(Some(self.shelve_entries.len() - 1));
+                    self.shelve_state
+                        .select(Some(self.shelve_entries.len() - 1));
                 }
                 None
             }

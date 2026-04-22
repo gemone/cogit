@@ -46,9 +46,7 @@ fn parse_normal(key: KeyEvent) -> Option<Motion> {
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Some(Motion::PageDown)
         }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(Motion::PageUp)
-        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Motion::PageUp),
         KeyCode::Enter => Some(Motion::Enter),
         KeyCode::Tab => Some(Motion::Tab),
         KeyCode::Esc => Some(Motion::Escape),

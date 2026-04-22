@@ -1,6 +1,6 @@
 pub mod shell;
-pub mod stash;
 pub mod shelve;
+pub mod stash;
 pub mod types;
 
 use anyhow::Result;

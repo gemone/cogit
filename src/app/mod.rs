@@ -3,20 +3,20 @@ pub mod notification;
 pub mod styles;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 use std::path::Path;
 
 use crate::gitops::Repository;
 use crate::panels::{
-    branch_panel::BranchPanel, filelist_panel::FileListPanel, log_panel::LogPanel,
-    stash_panel::StashPanel, Action, Panel,
+    Action, Panel, branch_panel::BranchPanel, filelist_panel::FileListPanel, log_panel::LogPanel,
+    stash_panel::StashPanel,
 };
 use crate::vimkeys::Mode;
 
@@ -47,7 +47,8 @@ pub struct App {
     // UI components
     cmdline: CmdLine,
     notifications: NotificationManager,
-    diff_popup: Option<(String, u16)>, // (content, scroll)
+    diff_popup: Option<(String, String, u16)>, // (path, content, scroll)
+    commit_dialog: Option<String>,             // commit message input
 }
 
 impl App {
@@ -75,10 +76,14 @@ impl App {
             cmdline,
             notifications,
             diff_popup: None,
+            commit_dialog: None,
         })
     }
 
-    pub fn run(&mut self, terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    pub fn run(
+        &mut self,
+        terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+    ) -> Result<()> {
         while !self.should_quit {
             terminal.draw(|f| self.draw_frame(f))?;
             if event::poll(std::time::Duration::from_millis(100))? {
@@ -99,14 +104,60 @@ impl App {
                     self.diff_popup = None;
                 }
                 KeyCode::Char('j') | KeyCode::Down => {
-                    if let Some((_, ref mut scroll)) = self.diff_popup {
+                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
                         *scroll = scroll.saturating_add(1);
                     }
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
-                    if let Some((_, ref mut scroll)) = self.diff_popup {
+                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
                         *scroll = scroll.saturating_sub(1);
                     }
+                }
+                KeyCode::Char('G') => {
+                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
+                        *scroll = u16::MAX;
+                    }
+                }
+                KeyCode::Char('g') => {
+                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
+                        *scroll = 0;
+                    }
+                }
+                KeyCode::PageDown | KeyCode::Char('J') => {
+                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
+                        *scroll = scroll.saturating_add(15);
+                    }
+                }
+                KeyCode::PageUp | KeyCode::Char('K') => {
+                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
+                        *scroll = scroll.saturating_sub(15);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Commit dialog takes priority
+        if let Some(ref mut msg) = self.commit_dialog {
+            match key.code {
+                KeyCode::Esc => {
+                    self.commit_dialog = None;
+                }
+                KeyCode::Enter => {
+                    let msg = std::mem::take(msg);
+                    self.commit_dialog = None;
+                    if !msg.is_empty() {
+                        self.dispatch(Action::Commit(msg));
+                    } else {
+                        self.notifications.notify_error("Empty commit message");
+                    }
+                }
+                KeyCode::Backspace => {
+                    msg.pop();
+                }
+                KeyCode::Char(c) => {
+                    msg.push(c);
                 }
                 _ => {}
             }
@@ -162,9 +213,7 @@ impl App {
                 self.should_quit = true;
             }
             KeyCode::Char('s') => {
-                if let Some(action) = self.filelist.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
-                    self.dispatch(action);
-                }
+                self.dispatch(Action::Stage);
             }
             KeyCode::Char('S') => {
                 self.dispatch(Action::StageAll);
@@ -247,7 +296,8 @@ impl App {
             ":amend" => Action::AmendCommit,
             "" => return,
             _ => {
-                self.notifications.notify_error(&format!("Unknown command: {}", cmd));
+                self.notifications
+                    .notify_error(&format!("Unknown command: {}", cmd));
                 return;
             }
         };
@@ -300,7 +350,8 @@ impl App {
             }
             Action::StageAll => {
                 if let Err(e) = self.repo.stage_all() {
-                    self.notifications.notify_error(&format!("Stage all failed: {}", e));
+                    self.notifications
+                        .notify_error(&format!("Stage all failed: {}", e));
                 } else {
                     self.notifications.notify("All files staged");
                     self.refresh_all();
@@ -311,7 +362,8 @@ impl App {
             }
             Action::UnstageAll => {
                 if let Err(e) = self.repo.unstage_all() {
-                    self.notifications.notify_error(&format!("Unstage all failed: {}", e));
+                    self.notifications
+                        .notify_error(&format!("Unstage all failed: {}", e));
                 } else {
                     self.notifications.notify("All files unstaged");
                     self.refresh_all();
@@ -321,217 +373,219 @@ impl App {
                 self.dispatch_discard();
             }
             Action::CommitDialog => {
-                // Simplified: commit with default message
-                self.notifications.notify("Use :commit -m \"message\" to commit");
-            }
-            Action::Commit(msg) => {
-                match self.repo.commit(&msg) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Committed: {}", msg));
-                        self.refresh_all();
-                    }
-                    Err(e) => self.notifications.notify_error(&format!("Commit failed: {}", e)),
+                let staged = self.filelist.files.iter().filter(|f| f.staged).count();
+                if staged == 0 {
+                    self.notifications
+                        .notify_error("Nothing staged. Stage files first (s/Space)");
+                } else {
+                    self.commit_dialog = Some(String::new());
                 }
             }
-            Action::AmendCommit => {
-                match self.repo.amend_commit(None) {
-                    Ok(_) => {
-                        self.notifications.notify("Commit amended");
-                        self.refresh_all();
-                    }
-                    Err(e) => self.notifications.notify_error(&format!("Amend failed: {}", e)),
+            Action::Commit(msg) => match self.repo.commit(&msg) {
+                Ok(_) => {
+                    self.notifications.notify(&format!("Committed: {}", msg));
+                    self.refresh_all();
                 }
-            }
-            Action::CheckoutBranch(name) => {
-                match self.repo.checkout(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Switched to {}", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Checkout failed: {}", e));
-                    }
+                Err(e) => self
+                    .notifications
+                    .notify_error(&format!("Commit failed: {}", e)),
+            },
+            Action::AmendCommit => match self.repo.amend_commit(None) {
+                Ok(_) => {
+                    self.notifications.notify("Commit amended");
+                    self.refresh_all();
                 }
-            }
-            Action::PushCurrent => {
-                match self.repo.push_current() {
-                    Ok(_) => {
-                        self.notifications.notify("Pushed successfully");
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Push failed: {}", e));
-                    }
+                Err(e) => self
+                    .notifications
+                    .notify_error(&format!("Amend failed: {}", e)),
+            },
+            Action::CheckoutBranch(name) => match self.repo.checkout(&name) {
+                Ok(_) => {
+                    self.notifications.notify(&format!("Switched to {}", name));
+                    self.refresh_all();
                 }
-            }
-            Action::FetchAll => {
-                match self.repo.fetch_all() {
-                    Ok(_) => {
-                        self.notifications.notify("Fetched all remotes");
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Fetch failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Checkout failed: {}", e));
                 }
-            }
-            Action::PullCurrent => {
-                match self.repo.pull_current() {
-                    Ok(_) => {
-                        self.notifications.notify("Pulled successfully");
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Pull failed: {}", e));
-                    }
+            },
+            Action::PushCurrent => match self.repo.push_current() {
+                Ok(_) => {
+                    self.notifications.notify("Pushed successfully");
+                    self.refresh_all();
                 }
-            }
-            Action::CreateBranch(name) => {
-                match self.repo.create_branch(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Created branch: {}", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Create branch failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Push failed: {}", e));
                 }
-            }
-            Action::DeleteBranch(name) => {
-                match self.repo.delete_branch(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Deleted branch: {}", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Delete branch failed: {}", e));
-                    }
+            },
+            Action::FetchAll => match self.repo.fetch_all() {
+                Ok(_) => {
+                    self.notifications.notify("Fetched all remotes");
+                    self.refresh_all();
                 }
-            }
-            Action::MergeBranch(name) => {
-                match self.repo.merge(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Merged: {}", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Merge failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Fetch failed: {}", e));
                 }
-            }
-            Action::RebaseBranch(name) => {
-                match self.repo.rebase(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Rebased onto: {}", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Rebase failed: {}", e));
-                    }
+            },
+            Action::PullCurrent => match self.repo.pull_current() {
+                Ok(_) => {
+                    self.notifications.notify("Pulled successfully");
+                    self.refresh_all();
                 }
-            }
-            Action::CherryPick(hash) => {
-                match self.repo.cherry_pick(&hash) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Cherry-picked: {}", &hash[..7.min(hash.len())]));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Cherry-pick failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Pull failed: {}", e));
                 }
-            }
+            },
+            Action::CreateBranch(name) => match self.repo.create_branch(&name) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Created branch: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Create branch failed: {}", e));
+                }
+            },
+            Action::DeleteBranch(name) => match self.repo.delete_branch(&name) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Deleted branch: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Delete branch failed: {}", e));
+                }
+            },
+            Action::MergeBranch(name) => match self.repo.merge(&name) {
+                Ok(_) => {
+                    self.notifications.notify(&format!("Merged: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Merge failed: {}", e));
+                }
+            },
+            Action::RebaseBranch(name) => match self.repo.rebase(&name) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Rebased onto: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Rebase failed: {}", e));
+                }
+            },
+            Action::CherryPick(hash) => match self.repo.cherry_pick(&hash) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Cherry-picked: {}", &hash[..7.min(hash.len())]));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Cherry-pick failed: {}", e));
+                }
+            },
             Action::CopyHash(hash) => {
                 // Copy to clipboard - simplified notification
-                self.notifications.notify(&format!("Copied: {}", &hash[..7.min(hash.len())]));
+                self.notifications
+                    .notify(&format!("Copied: {}", &hash[..7.min(hash.len())]));
             }
             Action::SearchLog(_query) => {
                 // Handled by log panel directly
             }
-            Action::Stash => {
-                match self.repo.stash_create(None) {
-                    Ok(_) => {
-                        self.notifications.notify("Stash created");
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Stash failed: {}", e));
-                    }
+            Action::Stash => match self.repo.stash_create(None) {
+                Ok(_) => {
+                    self.notifications.notify("Stash created");
+                    self.refresh_all();
                 }
-            }
-            Action::StashPop(index) => {
-                match self.repo.stash_pop(index) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Stash@{} popped", index));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Stash pop failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Stash failed: {}", e));
                 }
-            }
-            Action::StashApply(index) => {
-                match self.repo.stash_apply(index) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Stash@{} applied", index));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Stash apply failed: {}", e));
-                    }
+            },
+            Action::StashPop(index) => match self.repo.stash_pop(index) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Stash@{} popped", index));
+                    self.refresh_all();
                 }
-            }
-            Action::StashDrop(index) => {
-                match self.repo.stash_drop(index) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Stash@{} dropped", index));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Stash drop failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Stash pop failed: {}", e));
                 }
-            }
-            Action::ShelveApply(name) => {
-                match self.repo.shelve_apply(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Shelve '{}' applied", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Shelve apply failed: {}", e));
-                    }
+            },
+            Action::StashApply(index) => match self.repo.stash_apply(index) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Stash@{} applied", index));
+                    self.refresh_all();
                 }
-            }
-            Action::ShelveDrop(name) => {
-                match self.repo.shelve_drop(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Shelve '{}' deleted", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Shelve drop failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Stash apply failed: {}", e));
                 }
-            }
-            Action::ShelveCreate => {
-                match self.repo.shelve_create("default") {
-                    Ok(_) => {
-                        self.notifications.notify("Shelve created");
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Shelve create failed: {}", e));
-                    }
+            },
+            Action::StashDrop(index) => match self.repo.stash_drop(index) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Stash@{} dropped", index));
+                    self.refresh_all();
                 }
-            }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Stash drop failed: {}", e));
+                }
+            },
+            Action::ShelveApply(name) => match self.repo.shelve_apply(&name) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Shelve '{}' applied", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Shelve apply failed: {}", e));
+                }
+            },
+            Action::ShelveDrop(name) => match self.repo.shelve_drop(&name) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Shelve '{}' deleted", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Shelve drop failed: {}", e));
+                }
+            },
+            Action::ShelveCreate => match self.repo.shelve_create("default") {
+                Ok(_) => {
+                    self.notifications.notify("Shelve created");
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Shelve create failed: {}", e));
+                }
+            },
             Action::Help => {
                 self.notifications
                     .notify("1:branches 2:log 4:stash :commands q:quit");
             }
             Action::ShowDiff(path) => {
-                let content = self.repo.file_diff(&path).unwrap_or_else(|e| format!("Error: {}", e));
-                self.diff_popup = Some((content, 0));
+                let content = self
+                    .repo
+                    .file_diff(&path)
+                    .unwrap_or_else(|e| format!("Error: {}", e));
+                self.diff_popup = Some((path, content, 0));
             }
         }
     }
@@ -541,7 +595,8 @@ impl App {
         let i = self.filelist.state.selected().unwrap_or(0);
         if let Some(file) = self.filelist.files.get(i) {
             if let Err(e) = self.repo.stage(&file.path) {
-                self.notifications.notify_error(&format!("Stage failed: {}", e));
+                self.notifications
+                    .notify_error(&format!("Stage failed: {}", e));
             } else {
                 self.notifications.notify(&format!("Staged: {}", file.path));
                 self.refresh_all();
@@ -553,9 +608,11 @@ impl App {
         let i = self.filelist.state.selected().unwrap_or(0);
         if let Some(file) = self.filelist.files.get(i) {
             if let Err(e) = self.repo.unstage(&file.path) {
-                self.notifications.notify_error(&format!("Unstage failed: {}", e));
+                self.notifications
+                    .notify_error(&format!("Unstage failed: {}", e));
             } else {
-                self.notifications.notify(&format!("Unstaged: {}", file.path));
+                self.notifications
+                    .notify(&format!("Unstaged: {}", file.path));
                 self.refresh_all();
             }
         }
@@ -565,9 +622,11 @@ impl App {
         let i = self.filelist.state.selected().unwrap_or(0);
         if let Some(file) = self.filelist.files.get(i) {
             if let Err(e) = self.repo.discard(&file.path) {
-                self.notifications.notify_error(&format!("Discard failed: {}", e));
+                self.notifications
+                    .notify_error(&format!("Discard failed: {}", e));
             } else {
-                self.notifications.notify(&format!("Discarded: {}", file.path));
+                self.notifications
+                    .notify(&format!("Discarded: {}", file.path));
                 self.refresh_all();
             }
         }
@@ -616,8 +675,13 @@ impl App {
         }
 
         // Diff popup overlay
-        if let Some((ref content, scroll)) = self.diff_popup {
-            self.draw_diff_popup(f, size, content, scroll);
+        if let Some((ref path, ref content, scroll)) = self.diff_popup {
+            self.draw_diff_popup(f, size, path, content, scroll);
+        }
+
+        // Commit dialog overlay
+        if let Some(ref msg) = self.commit_dialog {
+            self.draw_commit_dialog(f, size, msg);
         }
 
         // Notifications on top of everything
@@ -628,9 +692,9 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),  // Status bar
-                Constraint::Min(5),     // File list
-                Constraint::Length(1),  // Sidebar help
+                Constraint::Length(1), // Status bar
+                Constraint::Min(5),    // File list
+                Constraint::Length(1), // Sidebar help
             ])
             .split(area);
 
@@ -641,10 +705,7 @@ impl App {
                 format!(" {} ", branch),
                 self.styles.addition.add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                " cogit ",
-                self.styles.text_secondary,
-            ),
+            Span::styled(" cogit ", self.styles.text_secondary),
         ]))
         .style(Style::default().bg(ratatui::style::Color::DarkGray));
         f.render_widget(status_bar, chunks[0]);
@@ -659,7 +720,7 @@ impl App {
         f.render_widget(help, chunks[2]);
     }
 
-    fn draw_diff_popup(&self, f: &mut Frame, area: Rect, content: &str, scroll: u16) {
+    fn draw_diff_popup(&self, f: &mut Frame, area: Rect, path: &str, content: &str, scroll: u16) {
         // Centered popup: 80% width, 80% height
         let popup_w = (area.width as u16 * 4 / 5).max(40);
         let popup_h = (area.height * 4 / 5).max(10);
@@ -699,7 +760,7 @@ impl App {
             })
             .collect();
 
-        let title = " Diff (Esc:close j/k:scroll) ";
+        let title = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", path);
         let paragraph = Paragraph::new(lines)
             .block(
                 Block::default()
@@ -710,5 +771,65 @@ impl App {
             .scroll((scroll, 0));
 
         f.render_widget(paragraph, inner);
+    }
+
+    fn draw_commit_dialog(&self, f: &mut Frame, area: Rect, msg: &str) {
+        let popup_w = (area.width * 3 / 5).max(40);
+        let popup_h = 9;
+        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+        let clear = Block::default().style(
+            Style::default()
+                .bg(ratatui::style::Color::Black)
+                .fg(ratatui::style::Color::White),
+        );
+        f.render_widget(clear, popup_area);
+
+        let staged_count = self.filelist.files.iter().filter(|f| f.staged).count();
+
+        let input_display = if msg.is_empty() {
+            "type commit message...".to_string()
+        } else {
+            msg.to_string()
+        };
+
+        let lines = vec![
+            Line::from(Span::styled(
+                format!("  {} file(s) staged", staged_count),
+                Style::default()
+                    .fg(ratatui::style::Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("> ", Style::default().fg(ratatui::style::Color::Yellow)),
+                Span::styled(
+                    input_display,
+                    if msg.is_empty() {
+                        Style::default().fg(ratatui::style::Color::DarkGray)
+                    } else {
+                        Style::default()
+                            .fg(ratatui::style::Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    },
+                ),
+                Span::styled("█", Style::default().fg(ratatui::style::Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Enter: commit  |  Esc: cancel",
+                Style::default().fg(ratatui::style::Color::DarkGray),
+            )),
+        ];
+
+        let paragraph = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Commit ")
+                .border_style(Style::default().fg(ratatui::style::Color::Green)),
+        );
+        f.render_widget(paragraph, popup_area);
     }
 }

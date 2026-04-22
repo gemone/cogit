@@ -1,17 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 use std::any::Any;
 
 use super::{Action, Panel};
 use crate::app::styles::Styles;
-use crate::gitops::types::CommitDetail;
 use crate::gitops::Repository;
+use crate::gitops::types::CommitDetail;
 
 pub struct LogPanel {
     repo: std::path::PathBuf,
@@ -123,9 +123,7 @@ impl Panel for LogPanel {
                     Span::styled(&info.date, self.styles.text_primary),
                 ]),
                 Line::from(""),
-                Line::from(vec![
-                    Span::styled(&info.subject, self.styles.text_primary),
-                ]),
+                Line::from(vec![Span::styled(&info.subject, self.styles.text_primary)]),
                 Line::from(detail.body.clone()),
             ]
         } else {
