@@ -23,7 +23,11 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create and run app
-    let repo_path = std::env::current_dir()?;
+    let repo_arg = std::env::args().nth(1);
+    let repo_path = match repo_arg {
+        Some(ref p) => std::path::PathBuf::from(p),
+        None => std::env::current_dir()?,
+    };
     let mut app = app::App::new(&repo_path)?;
     let res = app.run(&mut terminal);
 

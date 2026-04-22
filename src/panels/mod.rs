@@ -45,6 +45,7 @@ pub enum Action {
     MergeBranch(String),
     RebaseBranch(String),
     PullCurrent,
+    ShowDiff(String),
 }
 
 pub trait Panel {

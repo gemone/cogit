@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 use std::path::Path;
@@ -47,6 +47,7 @@ pub struct App {
     // UI components
     cmdline: CmdLine,
     notifications: NotificationManager,
+    diff_popup: Option<(String, u16)>, // (content, scroll)
 }
 
 impl App {
@@ -73,6 +74,7 @@ impl App {
             stash_panel,
             cmdline,
             notifications,
+            diff_popup: None,
         })
     }
 
@@ -90,6 +92,27 @@ impl App {
     }
 
     fn handle_event(&mut self, key: KeyEvent) {
+        // Diff popup takes priority
+        if self.diff_popup.is_some() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.diff_popup = None;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if let Some((_, ref mut scroll)) = self.diff_popup {
+                        *scroll = scroll.saturating_add(1);
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if let Some((_, ref mut scroll)) = self.diff_popup {
+                        *scroll = scroll.saturating_sub(1);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Command mode takes priority
         if self.cmdline.is_visible() {
             self.handle_command_key(key);
@@ -503,7 +526,12 @@ impl App {
                 }
             }
             Action::Help => {
-                self.notifications.notify("1:branches 2:log 4:stash :commands q:quit");
+                self.notifications
+                    .notify("1:branches 2:log 4:stash :commands q:quit");
+            }
+            Action::ShowDiff(path) => {
+                let content = self.repo.file_diff(&path).unwrap_or_else(|e| format!("Error: {}", e));
+                self.diff_popup = Some((content, 0));
             }
         }
     }
@@ -559,16 +587,25 @@ impl App {
         let bg = Block::default().style(Style::default().bg(ratatui::style::Color::Reset));
         f.render_widget(bg, size);
 
+        // Reserve bottom row for command line when visible
+        let view_area = if self.cmdline.is_visible() {
+            Rect {
+                height: size.height.saturating_sub(1),
+                ..size
+            }
+        } else {
+            size
+        };
+
         match self.view {
-            View::Main => self.draw_main(f, size),
-            View::Branches => self.branch_panel.render(f, size),
-            View::Log => self.log_panel.render(f, size),
-            View::Stash => self.stash_panel.render(f, size),
+            View::Main => self.draw_main(f, view_area),
+            View::Branches => self.branch_panel.render(f, view_area),
+            View::Log => self.log_panel.render(f, view_area),
+            View::Stash => self.stash_panel.render(f, view_area),
         }
 
-        // Command line
-        let cmd_height = if self.cmdline.is_visible() { 1 } else { 0 };
-        if cmd_height > 0 {
+        // Command line at bottom
+        if self.cmdline.is_visible() {
             let cmd_area = Rect {
                 x: 0,
                 y: size.height.saturating_sub(1),
@@ -576,6 +613,11 @@ impl App {
                 height: 1,
             };
             self.cmdline.render(f, cmd_area);
+        }
+
+        // Diff popup overlay
+        if let Some((ref content, scroll)) = self.diff_popup {
+            self.draw_diff_popup(f, size, content, scroll);
         }
 
         // Notifications on top of everything
@@ -610,10 +652,63 @@ impl App {
         // File list
         self.filelist.focus();
         self.filelist.render(f, chunks[1]);
-
-        // Sidebar help
-        let help = Paragraph::new(" 1:branches 2:log 4:stash :commands s:stage S:stage-all c:commit q:quit")
-            .style(self.styles.text_secondary);
+        let help = Paragraph::new(
+            " 1:branches 2:log 4:stash :commands s:stage S:stage-all c:commit q:quit",
+        )
+        .style(self.styles.text_secondary);
         f.render_widget(help, chunks[2]);
+    }
+
+    fn draw_diff_popup(&self, f: &mut Frame, area: Rect, content: &str, scroll: u16) {
+        // Centered popup: 80% width, 80% height
+        let popup_w = (area.width as u16 * 4 / 5).max(40);
+        let popup_h = (area.height * 4 / 5).max(10);
+        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+        // Clear background
+        let clear = Block::default().style(
+            Style::default()
+                .bg(ratatui::style::Color::Black)
+                .fg(ratatui::style::Color::White),
+        );
+        f.render_widget(clear, popup_area);
+
+        let inner = Rect {
+            x: popup_area.x + 1,
+            y: popup_area.y + 1,
+            width: popup_area.width.saturating_sub(2),
+            height: popup_area.height.saturating_sub(3),
+        };
+
+        // Color diff lines
+        let lines: Vec<Line> = content
+            .lines()
+            .map(|line| {
+                let style = if line.starts_with('+') && !line.starts_with("+++") {
+                    Style::default().fg(ratatui::style::Color::Green)
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    Style::default().fg(ratatui::style::Color::Red)
+                } else if line.starts_with("@@") {
+                    Style::default().fg(ratatui::style::Color::Cyan)
+                } else {
+                    Style::default().fg(ratatui::style::Color::White)
+                };
+                Line::from(Span::styled(line.to_string(), style))
+            })
+            .collect();
+
+        let title = " Diff (Esc:close j/k:scroll) ";
+        let paragraph = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(Style::default().fg(ratatui::style::Color::Yellow)),
+            )
+            .scroll((scroll, 0));
+
+        f.render_widget(paragraph, inner);
     }
 }

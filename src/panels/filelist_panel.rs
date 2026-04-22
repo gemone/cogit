@@ -120,7 +120,14 @@ impl Panel for FileListPanel {
                 self.state.select(Some(0));
                 None
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
+            KeyCode::Enter => {
+                let i = self.state.selected().unwrap_or(0);
+                if let Some(file) = self.files.get(i) {
+                    return Some(Action::ShowDiff(file.path.clone()));
+                }
+                None
+            }
+            KeyCode::Char(' ') => {
                 let i = self.state.selected().unwrap_or(0);
                 if let Some(file) = self.files.get(i) {
                     if file.staged {

@@ -222,6 +222,21 @@ impl Repository {
         Ok(output)
     }
 
+    pub fn file_diff(&self, path: &str) -> Result<String> {
+        let output = self.git_cmd(&["diff", path]).unwrap_or_default();
+        if output.is_empty() {
+            // Try cached diff (staged file)
+            let cached = self.git_cmd(&["diff", "--cached", path]).unwrap_or_default();
+            if cached.is_empty() {
+                Ok(format!("(no changes: {})", path))
+            } else {
+                Ok(cached)
+            }
+        } else {
+            Ok(output)
+        }
+    }
+
     pub(crate) fn git_cmd(&self, args: &[&str]) -> Result<String> {
         let output = std::process::Command::new("git")
             .args(args)
