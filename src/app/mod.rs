@@ -149,6 +149,9 @@ impl App {
                         *scroll = scroll.saturating_sub(15);
                     }
                 }
+                KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Char('u') | KeyCode::Char('U') => {
+                    // Ignore scroll-related keys to prevent accidental navigation
+                }
                 _ => {}
             }
             return;
@@ -784,8 +787,8 @@ impl App {
                     .notify_error(&format!("Amend failed: {}", e)),
             },
             Action::CheckoutBranch(name) => {
-                // Check for uncommitted changes
-                let has_changes = self.filelist.files.iter().any(|f| f.staged || f.status == '?');
+                // Check for uncommitted changes (staged, unstaged, and untracked)
+                let has_changes = !self.filelist.files.is_empty();
                 if has_changes {
                     self.pending_checkout = Some(name.clone());
                     self.notifications

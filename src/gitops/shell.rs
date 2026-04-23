@@ -416,8 +416,12 @@ impl Repository {
         } else {
             String::new()
         };
-        // Append pattern if not already present
-        if !content.contains(pattern) {
+        // Append pattern if not already present (check exact line match after trimming)
+        let pattern_trimmed = pattern.trim();
+        let is_duplicate = content
+            .lines()
+            .any(|line| line.trim() == pattern_trimmed);
+        if !is_duplicate {
             if !content.ends_with('\n') && !content.is_empty() {
                 content.push('\n');
             }
@@ -434,12 +438,22 @@ impl Repository {
             return Ok(());
         }
         let content = std::fs::read_to_string(&gitignore_path)?;
+        let has_trailing_newline = content.ends_with('\n');
         let new_content: String = content
             .lines()
-            .filter(|line| line != &pattern)
+            .filter(|line| line.trim() != pattern.trim())
             .collect::<Vec<_>>()
             .join("\n");
-        if new_content != content {
+        // Preserve original trailing newline
+        let new_content = if has_trailing_newline && !new_content.is_empty() {
+            new_content + "\n"
+        } else {
+            new_content
+        };
+        // Compare normalized representations before writing
+        let content_normalized = content.trim_end();
+        let new_content_normalized = new_content.trim_end();
+        if new_content_normalized != content_normalized {
             std::fs::write(&gitignore_path, new_content)?;
         }
         Ok(())
