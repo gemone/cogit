@@ -159,8 +159,8 @@ impl Panel for BranchPanel {
 
         match key.code {
             KeyCode::Enter => {
-                if let Some(name) = self.current_branch_name() {
-                    if let Some(idx) = self.state.selected() {
+                if let Some(name) = self.current_branch_name()
+                    && let Some(idx) = self.state.selected() {
                         let actual_i = self.filtered_indices.get(idx).copied().unwrap_or(idx);
                         if let Some(branch) = self.branches.get(actual_i) {
                             if branch.is_remote {
@@ -170,7 +170,6 @@ impl Panel for BranchPanel {
                             }
                         }
                     }
-                }
                 None
             }
             KeyCode::Char('n') => Some(Action::CreateBranchDialog),
@@ -182,16 +181,14 @@ impl Panel for BranchPanel {
             KeyCode::Char('m') => self.current_branch_name().map(Action::MergeBranch),
             KeyCode::Char('r') => self.current_branch_name().map(Action::RebaseBranch),
             KeyCode::Char('o') => {
-                if let Some(name) = self.current_branch_name() {
-                    if let Some(idx) = self.state.selected() {
+                if let Some(name) = self.current_branch_name()
+                    && let Some(idx) = self.state.selected() {
                         let actual_i = self.filtered_indices.get(idx).copied().unwrap_or(idx);
-                        if let Some(branch) = self.branches.get(actual_i) {
-                            if branch.is_remote {
+                        if let Some(branch) = self.branches.get(actual_i)
+                            && branch.is_remote {
                                 return Some(Action::CheckoutRemoteBranch(name));
                             }
-                        }
                     }
-                }
                 None
             }
             KeyCode::Char('c') => {

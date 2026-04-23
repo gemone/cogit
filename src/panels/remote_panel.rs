@@ -175,7 +175,7 @@ impl Panel for RemotePanel {
                 self.input_mode = true;
                 self.input_prompt = "name".to_string();
                 self.input_buffer.clear();
-                self.input_callback = Some(|name, url| Action::AddRemote(name, url));
+                self.input_callback = Some(Action::AddRemote);
                 self.input_arg.clear();
                 // Two-step input: first name, then URL
                 // For simplicity, we'll use a format like "name url" in one line
@@ -187,7 +187,7 @@ impl Panel for RemotePanel {
                     self.input_mode = true;
                     self.input_prompt = format!("rename '{}' to", name);
                     self.input_buffer.clear();
-                    self.input_callback = Some(|old, new| Action::RenameRemote(old, new));
+                    self.input_callback = Some(Action::RenameRemote);
                     self.input_arg = name;
                 }
                 None

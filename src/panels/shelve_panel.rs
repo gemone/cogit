@@ -154,8 +154,8 @@ impl Panel for ShelvePanel {
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         // Handle diff popup first
-        if self.diff_popup.is_some() {
-            if let Some((_, scroll)) = self.diff_popup.as_mut() {
+        if self.diff_popup.is_some()
+            && let Some((_, scroll)) = self.diff_popup.as_mut() {
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => {
                         self.close_diff();
@@ -180,7 +180,6 @@ impl Panel for ShelvePanel {
                     _ => return None,
                 }
             }
-        }
 
         if self.input_mode {
             match key.code {
@@ -242,11 +241,10 @@ impl Panel for ShelvePanel {
             KeyCode::Enter => {
                 if let Some(index) = self.selected_index() {
                     // Show diff in popup
-                    if let Ok(repo) = Repository::open(&self.repo) {
-                        if let Ok(content) = repo.shelve_show(index) {
+                    if let Ok(repo) = Repository::open(&self.repo)
+                        && let Ok(content) = repo.shelve_show(index) {
                             self.diff_popup = Some((content, 0));
                         }
-                    }
                 }
                 None
             }
