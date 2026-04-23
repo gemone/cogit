@@ -151,6 +151,11 @@ impl Repository {
         Ok(output)
     }
 
+    pub fn checkout_force(&self, refname: &str) -> Result<String> {
+        let output = self.git_cmd(&["checkout", "-f", refname])?;
+        Ok(output)
+    }
+
     pub fn create_branch(&self, name: &str) -> Result<String> {
         let output = self.git_cmd(&["branch", name])?;
         Ok(output)

@@ -292,32 +292,56 @@ impl App {
             return;
         }
 
-        // Pending checkout confirmation (smart checkout with stash)
+        // Pending checkout confirmation (smart checkout dialog)
         if self.pending_checkout.is_some() {
             match key.code {
-                KeyCode::Char('y') | KeyCode::Enter => {
+                KeyCode::Char('s') | KeyCode::Enter => {
                     let branch = self.pending_checkout.take();
                     if let Some(name) = branch {
-                        // Stash first, then checkout
-                        if let Err(e) = self.repo.stash_create(None) {
-                            self.notifications
-                                .notify_error(&format!("Stash failed: {}", e));
-                        } else {
-                            match self.repo.checkout(&name) {
-                                Ok(_) => {
-                                    self.notifications
-                                        .notify(&format!("Stashed and switched to {}", name));
-                                    self.refresh_all();
+                        // Smart Checkout: shelve → checkout → unshelve
+                        let shelve_name = format!("smart-checkout-{}-{}", name.replace('/', "-"), std::process::id());
+                        match self.repo.shelve_create(&shelve_name, true) {
+                            Ok(_) => {
+                                match self.repo.checkout(&name) {
+                                    Ok(_) => {
+                                        // Try to unshelve immediately
+                                        match self.repo.shelve_apply(0, true) {
+                                            Ok(_) => {
+                                                self.notifications.notify(&format!("Smart checkout: switched to {} and restored changes", name));
+                                            }
+                                            Err(e) => {
+                                                self.notifications.notify(&format!("Switched to {}, shelved changes kept (unshelve failed: {})", name, e));
+                                            }
+                                        }
+                                        self.refresh_all();
+                                    }
+                                    Err(e) => {
+                                        self.notifications.notify_error(&format!("Checkout failed: {}", e));
+                                    }
                                 }
-                                Err(e) => {
-                                    self.notifications
-                                        .notify_error(&format!("Checkout failed: {}", e));
-                                }
+                            }
+                            Err(e) => {
+                                self.notifications.notify_error(&format!("Shelve failed: {}", e));
                             }
                         }
                     }
                 }
-                KeyCode::Char('n') | KeyCode::Esc => {
+                KeyCode::Char('f') => {
+                    let branch = self.pending_checkout.take();
+                    if let Some(name) = branch {
+                        // Force Checkout: discard local changes and checkout
+                        match self.repo.checkout_force(&name) {
+                            Ok(_) => {
+                                self.notifications.notify(&format!("Force checkout: switched to {} (local changes discarded)", name));
+                                self.refresh_all();
+                            }
+                            Err(e) => {
+                                self.notifications.notify_error(&format!("Force checkout failed: {}", e));
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('q') | KeyCode::Esc => {
                     self.pending_checkout = None;
                     self.notifications.notify("Checkout cancelled");
                 }
@@ -798,8 +822,6 @@ impl App {
                 let has_changes = !self.filelist.files.is_empty();
                 if has_changes {
                     self.pending_checkout = Some(name.clone());
-                    self.notifications
-                        .notify("Uncommitted changes. Stash and switch? (y/n)");
                 } else {
                     // No changes, proceed directly
                     match self.repo.checkout(&name) {
@@ -815,14 +837,19 @@ impl App {
                 }
             }
             Action::CheckoutRemoteBranch(name) => {
-                match self.repo.checkout_remote_branch(&name) {
-                    Ok(msg) => {
-                        self.notifications.notify(&msg);
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications
-                            .notify_error(&format!("Checkout remote branch failed: {}", e));
+                let has_changes = !self.filelist.files.is_empty();
+                if has_changes {
+                    self.pending_checkout = Some(name.clone());
+                } else {
+                    match self.repo.checkout_remote_branch(&name) {
+                        Ok(msg) => {
+                            self.notifications.notify(&msg);
+                            self.refresh_all();
+                        }
+                        Err(e) => {
+                            self.notifications
+                                .notify_error(&format!("Checkout remote branch failed: {}", e));
+                        }
                     }
                 }
             }
@@ -1483,6 +1510,11 @@ impl App {
             self.draw_merge_dialog(f, size, merge_state);
         }
 
+        // Smart checkout dialog overlay
+        if let Some(ref branch) = self.pending_checkout {
+            self.draw_smart_checkout_dialog(f, size, branch);
+        }
+
         // Gitignore popup overlay
         if let Some((ref content, scroll)) = self.gitignore_popup {
             self.draw_gitignore_popup(f, size, content, &scroll);
@@ -1754,6 +1786,40 @@ impl App {
         ];
 
         self.draw_input_dialog(f, area, 12, " Merge ", ratatui::style::Color::Green, lines);
+    }
+
+    fn draw_smart_checkout_dialog(&self, f: &mut Frame, area: Rect, branch: &str) {
+        let lines = vec![
+            Line::from(Span::styled(
+                " Smart Checkout ",
+                Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Uncommitted changes detected.", Style::default().fg(ratatui::style::Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Target branch: ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(branch, Style::default().fg(ratatui::style::Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  s", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("=Smart Checkout (shelve→checkout→unshelve)  ", Style::default().fg(ratatui::style::Color::DarkGray)),
+            ]),
+            Line::from(vec![
+                Span::styled("  f", Style::default().fg(ratatui::style::Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled("=Force Checkout (discard local changes)  ", Style::default().fg(ratatui::style::Color::DarkGray)),
+            ]),
+            Line::from(vec![
+                Span::styled("  q", Style::default().fg(ratatui::style::Color::Gray).add_modifier(Modifier::BOLD)),
+                Span::styled("=Cancel", Style::default().fg(ratatui::style::Color::DarkGray)),
+            ]),
+        ];
+
+        self.draw_input_dialog(f, area, 10, " Checkout ", ratatui::style::Color::Yellow, lines);
     }
 
     /// Draw a centered input dialog with common styling pattern.

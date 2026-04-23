@@ -132,6 +132,7 @@ impl HelpOverlay {
             Line::from(""),
             Line::from(vec![Span::styled("Branch panel", heading)]),
             Line::from(vec![Span::styled("  Enter", key), Span::styled(" checkout selected branch", text)]),
+            Line::from(vec![Span::styled("  o", key), Span::styled(" checkout remote branch as local", text)]),
             Line::from(vec![Span::styled("  n", key), Span::styled(" create new branch (dialog)", text)]),
             Line::from(vec![Span::styled("  d", key), Span::styled(" delete selected branch", text)]),
             Line::from(vec![Span::styled("  f", key), Span::styled(" fetch all remotes", text)]),
