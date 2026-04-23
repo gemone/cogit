@@ -11,6 +11,7 @@ use std::any::Any;
 use super::{Action, Panel};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
+use crate::gitops::types::RebaseState;
 use crate::gitops::Repository;
 
 pub struct BranchPanel {
@@ -22,6 +23,7 @@ pub struct BranchPanel {
     search_mode: bool,
     search_query: String,
     filtered_indices: Vec<usize>,
+    rebase_state: RebaseState,
 }
 
 impl BranchPanel {
@@ -37,6 +39,7 @@ impl BranchPanel {
             search_mode: false,
             search_query: String::new(),
             filtered_indices: Vec::new(),
+            rebase_state: RebaseState::Idle,
         };
         panel.refresh();
         panel
@@ -68,6 +71,8 @@ impl Panel for BranchPanel {
 
         let title = if self.search_mode {
             format!(" Branches [search: {}] ", self.search_query)
+        } else if let RebaseState::InProgress { onto, done_count, total_count } = &self.rebase_state {
+            format!(" Branches [REBASE: {} {}/{}] ", onto, done_count, total_count)
         } else {
             " Branches ".to_string()
         };
@@ -105,9 +110,12 @@ impl Panel for BranchPanel {
         f.render_stateful_widget(list, area, &mut self.state);
 
         // Help text at bottom
-        let help = Paragraph::new(
-            "Enter:switch n:new d:delete f:fetch p:push P:pull m:merge r:rebase /:search q:back",
-        )
+        let help_text = if matches!(self.rebase_state, RebaseState::InProgress { .. }) {
+            "Enter:switch n:new d:delete f:fetch p:push P:pull m:merge r:rebase c:continue a:abort s:skip /:search q:back"
+        } else {
+            "Enter:switch n:new d:delete f:fetch p:push P:pull m:merge r:rebase /:search q:back"
+        };
+        let help = Paragraph::new(help_text)
         .style(self.styles.text_secondary);
         let help_area = Rect {
             y: area.bottom().saturating_sub(1),
@@ -150,7 +158,20 @@ impl Panel for BranchPanel {
         }
 
         match key.code {
-            KeyCode::Enter => self.current_branch_name().map(Action::CheckoutBranch),
+            KeyCode::Enter => {
+                if let Some(name) = self.current_branch_name()
+                    && let Some(idx) = self.state.selected() {
+                        let actual_i = self.filtered_indices.get(idx).copied().unwrap_or(idx);
+                        if let Some(branch) = self.branches.get(actual_i) {
+                            if branch.is_remote {
+                                return Some(Action::CheckoutRemoteBranch(name));
+                            } else {
+                                return Some(Action::CheckoutBranch(name));
+                            }
+                        }
+                    }
+                None
+            }
             KeyCode::Char('n') => Some(Action::CreateBranchDialog),
             KeyCode::Char('R') => self.current_branch_name().map(Action::RenameBranchDialog),
             KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.current_branch_name().map(Action::DeleteBranch),
@@ -159,6 +180,38 @@ impl Panel for BranchPanel {
             KeyCode::Char('P') => Some(Action::PullCurrent),
             KeyCode::Char('m') => self.current_branch_name().map(Action::MergeBranch),
             KeyCode::Char('r') => self.current_branch_name().map(Action::RebaseBranch),
+            KeyCode::Char('o') => {
+                if let Some(name) = self.current_branch_name()
+                    && let Some(idx) = self.state.selected() {
+                        let actual_i = self.filtered_indices.get(idx).copied().unwrap_or(idx);
+                        if let Some(branch) = self.branches.get(actual_i)
+                            && branch.is_remote {
+                                return Some(Action::CheckoutRemoteBranch(name));
+                            }
+                    }
+                None
+            }
+            KeyCode::Char('c') => {
+                if matches!(self.rebase_state, RebaseState::InProgress { .. }) {
+                    Some(Action::RebaseContinue)
+                } else {
+                    None
+                }
+            }
+            KeyCode::Char('a') => {
+                if matches!(self.rebase_state, RebaseState::InProgress { .. }) {
+                    Some(Action::RebaseAbort)
+                } else {
+                    None
+                }
+            }
+            KeyCode::Char('s') => {
+                if matches!(self.rebase_state, RebaseState::InProgress { .. }) {
+                    Some(Action::RebaseSkip)
+                } else {
+                    None
+                }
+            }
             KeyCode::Char('/') => {
                 self.search_mode = true;
                 None
@@ -175,6 +228,7 @@ impl Panel for BranchPanel {
     fn refresh(&mut self) {
         if let Ok(repo) = Repository::open(&self.repo) {
             self.branches = repo.branches().unwrap_or_default();
+            self.rebase_state = repo.get_rebase_state().unwrap_or(RebaseState::Idle);
         }
         self.apply_filter();
         if self.filtered_indices.is_empty() {

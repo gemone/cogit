@@ -1,6 +1,8 @@
 pub mod branch_panel;
 pub mod filelist_panel;
 pub mod log_panel;
+pub mod remote_panel;
+pub mod shelve_panel;
 pub mod stash_panel;
 
 use crossterm::event::KeyEvent;
@@ -14,6 +16,7 @@ pub enum Action {
     ShowBranchPanel,
     ShowLogPanel,
     ShowStashPanel,
+    ShowRemotePanel,
     Stage,
     StageAll,
     Unstage,
@@ -23,6 +26,7 @@ pub enum Action {
     Commit(String),
     AmendCommit,
     CheckoutBranch(String),
+    CheckoutRemoteBranch(String),
     PushCurrent,
     FetchAll,
     Help,
@@ -31,10 +35,21 @@ pub enum Action {
     StashPop(usize),
     StashApply(usize),
     StashDrop(usize),
+    // Remote
+    AddRemote(String, String),
+    RemoveRemote(String),
+    RenameRemote(String, String),
+    FetchRemote(String),
+    ShowRemoteBranches(String),
     // Shelve
-    ShelveApply(String),
-    ShelveDrop(String),
-    ShelveCreate,
+    ShowShelvePanel,
+    ShelveCreate(String, bool),
+    ShelveApply(usize, bool),
+    ShelveDrop(usize),
+    // Old shelve actions (keep for compatibility)
+    ShelveApplyOld(String),
+    ShelveDropOld(String),
+    ShelveCreateOld,
     // Log
     CherryPick(String),
     CopyHash(String),
@@ -47,6 +62,9 @@ pub enum Action {
     DeleteBranch(String),
     MergeBranch(String),
     RebaseBranch(String),
+    RebaseContinue,
+    RebaseAbort,
+    RebaseSkip,
     PullCurrent,
     ShowDiff(String),
     // Diff panel for arbitrary refs
