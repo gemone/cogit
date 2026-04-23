@@ -171,7 +171,7 @@ impl Panel for LogPanel {
         }
 
         // Handle navigation with the shared helper
-        if handle_list_navigation(&mut self.state, self.commits.len(), key.code) {
+        if handle_list_navigation(&mut self.state, self.commits.len(), key) {
             self.load_detail();
             return None;
         }

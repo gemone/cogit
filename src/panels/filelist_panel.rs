@@ -98,7 +98,7 @@ impl Panel for FileListPanel {
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         // Handle navigation with the shared helper
-        if handle_list_navigation(&mut self.state, self.files.len(), key.code) {
+        if handle_list_navigation(&mut self.state, self.files.len(), key) {
             return None;
         }
 

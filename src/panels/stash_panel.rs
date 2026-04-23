@@ -273,7 +273,7 @@ impl StashPanel {
 
     fn handle_stash_key(&mut self, key: KeyEvent) -> Option<Action> {
         // Handle basic navigation with the shared helper
-        if handle_list_navigation(&mut self.stash_state, self.stash_entries.len(), key.code) {
+        if handle_list_navigation(&mut self.stash_state, self.stash_entries.len(), key) {
             return None;
         }
 
@@ -301,7 +301,7 @@ impl StashPanel {
 
     fn handle_shelve_key(&mut self, key: KeyEvent) -> Option<Action> {
         // Handle basic navigation with the shared helper
-        if handle_list_navigation(&mut self.shelve_state, self.shelve_entries.len(), key.code) {
+        if handle_list_navigation(&mut self.shelve_state, self.shelve_entries.len(), key) {
             return None;
         }
 
