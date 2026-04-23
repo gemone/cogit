@@ -3,6 +3,21 @@ use anyhow::Result;
 use super::Repository;
 use crate::gitops::types::*;
 
+#[derive(Debug, Clone)]
+pub struct MergePreview {
+    pub can_ff: bool,
+    pub has_conflicts: bool,
+    pub commits_count: usize,
+    pub files_changed: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum MergeStrategy {
+    FastForward,
+    NoFastForward,
+    Squash,
+}
+
 impl Repository {
     pub fn status(&self) -> Result<FileStatus> {
         let output = self.git_cmd(&["status", "--porcelain=v2", "--branch"])?;
@@ -398,6 +413,215 @@ impl Repository {
             anyhow::bail!("git {} failed: {}", args.join(" "), stderr);
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    pub fn preview_merge(&self, branch: &str) -> Result<MergePreview> {
+        // Check if fast-forward is possible
+        let can_ff = self
+            .git_cmd(&["merge-base", "--is-ancestor", "HEAD", branch])
+            .is_ok();
+
+        // Get commits that would be merged
+        let commits_output = self
+            .git_cmd(&["rev-list", "--count", &format!("HEAD..{}", branch)])
+            .unwrap_or_default();
+        let commits_count = commits_output.trim().parse::<usize>().unwrap_or(0);
+
+        // Get files that would be changed
+        let files_output = self
+            .git_cmd(&["diff", "--name-only", &format!("HEAD...{}", branch)])
+            .unwrap_or_default();
+        let files_changed: Vec<String> = files_output
+            .lines()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // Check for conflicts using merge-tree
+        let has_conflicts = if commits_count > 0 {
+            self.git_cmd(&["merge-tree", "HEAD", branch])
+                .map(|output| output.contains("<<"))
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        Ok(MergePreview {
+            can_ff,
+            has_conflicts,
+            commits_count,
+            files_changed,
+        })
+    }
+
+    pub fn smart_merge(&self, branch: &str, strategy: MergeStrategy) -> Result<String> {
+        let mut args = vec!["merge"];
+
+        match strategy {
+            MergeStrategy::FastForward => {
+                args.push("--ff-only");
+            }
+            MergeStrategy::NoFastForward => {
+                args.push("--no-ff");
+            }
+            MergeStrategy::Squash => {
+                args.push("--squash");
+            }
+        }
+
+        args.push(branch);
+
+        let output = self.git_cmd(&args)?;
+
+        // For squash, we need to create the commit
+        if matches!(strategy, MergeStrategy::Squash) {
+            self.git_cmd(&["commit", "-m", &format!("Squash merge {}", branch)])?;
+        }
+
+        Ok(output)
+    }
+
+    pub fn get_rebase_state(&self) -> Result<RebaseState> {
+        let git_dir = self.path.join(".git");
+        let rebase_merge_dir = git_dir.join("rebase-merge");
+        let rebase_apply_dir = git_dir.join("rebase-apply");
+
+        if rebase_merge_dir.exists() || rebase_apply_dir.exists() {
+            let onto_file = if rebase_merge_dir.exists() {
+                rebase_merge_dir.join("onto")
+            } else {
+                rebase_apply_dir.join("onto")
+            };
+
+            let onto = std::fs::read_to_string(&onto_file)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+
+            // Get done commits count
+            let done_file = if rebase_merge_dir.exists() {
+                rebase_merge_dir.join("done")
+            } else {
+                rebase_apply_dir.join("done")
+            };
+            let done_count = std::fs::read_to_string(&done_file)
+                .unwrap_or_default()
+                .lines()
+                .count();
+
+            // Get total commits
+            let total_file = if rebase_merge_dir.exists() {
+                rebase_merge_dir.join("git-rebase-todo")
+            } else {
+                rebase_apply_dir.join("git-rebase-todo")
+            };
+            let todo_count = std::fs::read_to_string(&total_file)
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .count();
+            let total_count = done_count + todo_count;
+
+            Ok(RebaseState::InProgress {
+                onto: onto[..8.min(onto.len())].to_string(),
+                done_count,
+                total_count,
+            })
+        } else {
+            Ok(RebaseState::Idle)
+        }
+    }
+
+    pub fn rebase_continue(&self) -> Result<String> {
+        let output = self.git_cmd(&["rebase", "--continue"])?;
+        Ok(output)
+    }
+
+    pub fn rebase_abort(&self) -> Result<String> {
+        let output = self.git_cmd(&["rebase", "--abort"])?;
+        Ok(output)
+    }
+
+    pub fn rebase_skip(&self) -> Result<String> {
+        let output = self.git_cmd(&["rebase", "--skip"])?;
+        Ok(output)
+    }
+
+    pub fn remotes(&self) -> Result<Vec<RemoteInfo>> {
+        let output = self.git_cmd(&["remote", "-v"])?;
+        let mut remotes = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for line in output.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let name = parts[0].to_string();
+                let url = parts[1].to_string();
+                let direction = parts.get(2).map(|s| s.trim_matches('(')).unwrap_or("fetch");
+
+                if seen.insert(name.clone()) {
+                    let fetch_refspec = format!("+refs/heads/*:refs/remotes/{}/*", name);
+                    let push_refspec = format!("refs/heads/*:refs/remotes/{}/*", name);
+
+                    remotes.push(RemoteInfo {
+                        name,
+                        url,
+                        fetch_refspec,
+                        push_refspec,
+                    });
+                }
+            }
+        }
+
+        Ok(remotes)
+    }
+
+    pub fn add_remote(&self, name: &str, url: &str) -> Result<String> {
+        let output = self.git_cmd(&["remote", "add", name, url])?;
+        Ok(output)
+    }
+
+    pub fn remove_remote(&self, name: &str) -> Result<String> {
+        let output = self.git_cmd(&["remote", "remove", name])?;
+        Ok(output)
+    }
+
+    pub fn rename_remote(&self, old: &str, new: &str) -> Result<String> {
+        let output = self.git_cmd(&["remote", "rename", old, new])?;
+        Ok(output)
+    }
+
+    pub fn fetch_remote(&self, name: &str) -> Result<String> {
+        let output = self.git_cmd(&["fetch", name])?;
+        Ok(output)
+    }
+
+    pub fn checkout_remote_branch(&self, remote_branch: &str) -> Result<String> {
+        // Extract branch name from "remotes/origin/feature-x" -> "feature-x"
+        let branch_name = remote_branch
+            .strip_prefix("remotes/")
+            .unwrap_or(remote_branch)
+            .split('/')
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join("/");
+
+        // Check if local branch already exists
+        let local_exists = self
+            .git_cmd(&["rev-parse", "--verify", &branch_name])
+            .is_ok();
+
+        if local_exists {
+            // Reset local branch to remote
+            let remote_ref = remote_branch.strip_prefix("remotes/").unwrap_or(remote_branch);
+            self.git_cmd(&["branch", "-f", &branch_name, remote_ref])?;
+            self.git_cmd(&["checkout", &branch_name])?;
+            Ok(format!("Reset and checked out existing branch: {}", branch_name))
+        } else {
+            // Create new tracking branch
+            let output = self.git_cmd(&["checkout", "-b", &branch_name, remote_branch])?;
+            Ok(output)
+        }
     }
 
     pub fn gitignore_read(&self) -> Result<String> {

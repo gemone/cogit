@@ -52,6 +52,20 @@ pub struct WorktreeInfo {
     pub is_main: bool,
 }
 
+#[derive(Debug, Clone)]
+pub enum RebaseState {
+    Idle,
+    InProgress { onto: String, done_count: usize, total_count: usize },
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteInfo {
+    pub name: String,
+    pub url: String,
+    pub fetch_refspec: String,
+    pub push_refspec: String,
+}
+
 impl FileStatus {
     pub fn parse(output: &str) -> Self {
         let mut status = FileStatus::default();

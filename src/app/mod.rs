@@ -16,9 +16,10 @@ use ratatui::{
 use std::path::Path;
 
 use crate::gitops::Repository;
+use crate::gitops::shell::{MergePreview, MergeStrategy};
 use crate::panels::{
     Action, Panel, branch_panel::BranchPanel, filelist_panel::FileListPanel, log_panel::LogPanel,
-    stash_panel::StashPanel,
+    remote_panel, shelve_panel::ShelvePanel, stash_panel::StashPanel,
 };
 use crate::vimkeys::Mode;
 
@@ -33,6 +34,8 @@ pub enum View {
     Branches,
     Log,
     Stash,
+    Remote,
+    Shelve,
 }
 
 pub struct App {
@@ -47,6 +50,8 @@ pub struct App {
     branch_panel: BranchPanel,
     log_panel: LogPanel,
     stash_panel: StashPanel,
+    remote_panel: remote_panel::RemotePanel,
+    shelve_panel: ShelvePanel,
     // UI components
     cmdline: CmdLine,
     notifications: NotificationManager,
@@ -58,6 +63,7 @@ pub struct App {
     reset_dialog: Option<(String, String, bool)>, // (mode, path, selecting_mode)
     pending_checkout: Option<String>, // branch name waiting for stash confirmation
     gitignore_popup: Option<(String, u16)>, // (content, scroll)
+    merge_dialog: Option<(String, MergePreview)>, // (branch, preview)
     help_overlay: HelpOverlay,
 }
 
@@ -69,6 +75,8 @@ impl App {
         let branch_panel = BranchPanel::new(repo_path, &styles);
         let log_panel = LogPanel::new(repo_path, &styles);
         let stash_panel = StashPanel::new(repo_path, &styles);
+        let remote_panel = remote_panel::RemotePanel::new(repo_path, &styles);
+        let shelve_panel = ShelvePanel::new(repo_path, &styles);
         let cmdline = CmdLine::new(&styles);
         let notifications = NotificationManager::new();
         let help_overlay = HelpOverlay::new(&styles);
@@ -84,6 +92,8 @@ impl App {
             branch_panel,
             log_panel,
             stash_panel,
+            remote_panel,
+            shelve_panel,
             cmdline,
             notifications,
             diff_popup: None,
@@ -94,6 +104,7 @@ impl App {
             reset_dialog: None,
             pending_checkout: None,
             gitignore_popup: None,
+            merge_dialog: None,
             help_overlay,
         })
     }
@@ -315,6 +326,51 @@ impl App {
             return;
         }
 
+        // Merge dialog takes priority
+        if self.merge_dialog.is_some() {
+            match key.code {
+                KeyCode::Char('f') => {
+                    if let Some((branch, _)) = self.merge_dialog.take() {
+                        self.dispatch(Action::MergeBranch(branch));
+                    }
+                }
+                KeyCode::Char('n') => {
+                    if let Some((branch, _)) = self.merge_dialog.take() {
+                        match self.repo.smart_merge(&branch, MergeStrategy::NoFastForward) {
+                            Ok(output) => {
+                                self.notifications.notify(&format!("Merged (no-ff): {} {}", branch, output));
+                                self.refresh_all();
+                            }
+                            Err(e) => {
+                                self.notifications
+                                    .notify_error(&format!("Merge failed: {}", e));
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('s') => {
+                    if let Some((branch, _)) = self.merge_dialog.take() {
+                        match self.repo.smart_merge(&branch, MergeStrategy::Squash) {
+                            Ok(output) => {
+                                self.notifications.notify(&format!("Squash merged: {} {}", branch, output));
+                                self.refresh_all();
+                            }
+                            Err(e) => {
+                                self.notifications
+                                    .notify_error(&format!("Squash merge failed: {}", e));
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    self.merge_dialog = None;
+                    self.notifications.notify("Merge cancelled");
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Help overlay takes priority
         if self.help_overlay.is_visible() {
             self.help_overlay.handle_key(key);
@@ -353,6 +409,16 @@ impl App {
                     self.dispatch(action);
                 }
             }
+            View::Remote => {
+                if let Some(action) = self.remote_panel.handle_key(key) {
+                    self.dispatch(action);
+                }
+            }
+            View::Shelve => {
+                if let Some(action) = self.shelve_panel.handle_key(key) {
+                    self.dispatch(action);
+                }
+            }
         }
     }
 
@@ -370,6 +436,12 @@ impl App {
             }
             KeyCode::Char('4') => {
                 self.switch_view(View::Stash);
+            }
+            KeyCode::Char('R') => {
+                self.switch_view(View::Remote);
+            }
+            KeyCode::Char('S') => {
+                self.switch_view(View::Shelve);
             }
             KeyCode::Char('q') => {
                 self.should_quit = true;
@@ -591,6 +663,8 @@ impl App {
         self.branch_panel.blur();
         self.log_panel.blur();
         self.stash_panel.blur();
+        self.remote_panel.blur();
+        self.shelve_panel.blur();
 
         self.view = view.clone();
         match &self.view {
@@ -605,6 +679,12 @@ impl App {
             }
             View::Stash => {
                 self.stash_panel.focus();
+            }
+            View::Remote => {
+                self.remote_panel.focus();
+            }
+            View::Shelve => {
+                self.shelve_panel.focus();
             }
         }
     }
@@ -625,6 +705,12 @@ impl App {
             }
             Action::ShowStashPanel => {
                 self.switch_view(View::Stash);
+            }
+            Action::ShowRemotePanel => {
+                self.switch_view(View::Remote);
+            }
+            Action::ShowShelvePanel => {
+                self.switch_view(View::Shelve);
             }
             Action::Stage => {
                 self.dispatch_stage();
@@ -728,6 +814,18 @@ impl App {
                     }
                 }
             }
+            Action::CheckoutRemoteBranch(name) => {
+                match self.repo.checkout_remote_branch(&name) {
+                    Ok(msg) => {
+                        self.notifications.notify(&msg);
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications
+                            .notify_error(&format!("Checkout remote branch failed: {}", e));
+                    }
+                }
+            }
             Action::PushCurrent => match self.repo.push_current() {
                 Ok(_) => {
                     self.notifications.notify("Pushed successfully");
@@ -783,16 +881,39 @@ impl App {
                         .notify_error(&format!("Delete branch failed: {}", e));
                 }
             },
-            Action::MergeBranch(name) => match self.repo.merge(&name) {
-                Ok(_) => {
-                    self.notifications.notify(&format!("Merged: {}", name));
-                    self.refresh_all();
+            Action::MergeBranch(name) => {
+                // If merge_dialog is already open, do the actual merge
+                if self.merge_dialog.is_some() {
+                    self.merge_dialog = None;
+                    match self.repo.smart_merge(&name, MergeStrategy::FastForward) {
+                        Ok(output) => {
+                            self.notifications.notify(&format!("Merged: {} {}", name, output));
+                            self.refresh_all();
+                        }
+                        Err(e) => {
+                            self.notifications
+                                .notify_error(&format!("Merge failed: {}", e));
+                        }
+                    }
+                } else {
+                    // Show preview dialog first
+                    match self.repo.preview_merge(&name) {
+                        Ok(preview) => {
+                            if preview.has_conflicts {
+                                self.notifications
+                                    .notify_error(&format!("Merge '{}' would have conflicts ({} files changed, {} commits)",
+                                        name, preview.files_changed.len(), preview.commits_count));
+                            } else {
+                                self.merge_dialog = Some((name, preview));
+                            }
+                        }
+                        Err(e) => {
+                            self.notifications
+                                .notify_error(&format!("Failed to preview merge: {}", e));
+                        }
+                    }
                 }
-                Err(e) => {
-                    self.notifications
-                        .notify_error(&format!("Merge failed: {}", e));
-                }
-            },
+            }
             Action::RebaseBranch(name) => match self.repo.rebase(&name) {
                 Ok(_) => {
                     self.notifications
@@ -802,6 +923,36 @@ impl App {
                 Err(e) => {
                     self.notifications
                         .notify_error(&format!("Rebase failed: {}", e));
+                }
+            },
+            Action::RebaseContinue => match self.repo.rebase_continue() {
+                Ok(_) => {
+                    self.notifications.notify("Rebase continued");
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Rebase continue failed: {}", e));
+                }
+            },
+            Action::RebaseAbort => match self.repo.rebase_abort() {
+                Ok(_) => {
+                    self.notifications.notify("Rebase aborted");
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Rebase abort failed: {}", e));
+                }
+            },
+            Action::RebaseSkip => match self.repo.rebase_skip() {
+                Ok(_) => {
+                    self.notifications.notify("Rebase skipped");
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Rebase skip failed: {}", e));
                 }
             },
             Action::CherryPick(hash) => match self.repo.cherry_pick(&hash) {
@@ -911,7 +1062,7 @@ impl App {
                         .notify_error(&format!("Stash drop failed: {}", e));
                 }
             },
-            Action::ShelveApply(name) => match self.repo.shelve_apply(&name) {
+            Action::ShelveApplyOld(name) => match self.repo.shelve_apply_by_name(&name, false) {
                 Ok(_) => {
                     self.notifications
                         .notify(&format!("Shelve '{}' applied", name));
@@ -922,7 +1073,7 @@ impl App {
                         .notify_error(&format!("Shelve apply failed: {}", e));
                 }
             },
-            Action::ShelveDrop(name) => match self.repo.shelve_drop(&name) {
+            Action::ShelveDropOld(name) => match self.repo.shelve_drop_by_name(&name) {
                 Ok(_) => {
                     self.notifications
                         .notify(&format!("Shelve '{}' deleted", name));
@@ -933,7 +1084,7 @@ impl App {
                         .notify_error(&format!("Shelve drop failed: {}", e));
                 }
             },
-            Action::ShelveCreate => match self.repo.shelve_create("default") {
+            Action::ShelveCreateOld => match self.repo.shelve_create("default", false) {
                 Ok(_) => {
                     self.notifications.notify("Shelve created");
                     self.refresh_all();
@@ -941,6 +1092,41 @@ impl App {
                 Err(e) => {
                     self.notifications
                         .notify_error(&format!("Shelve create failed: {}", e));
+                }
+            },
+            Action::ShelveCreate(name, include_staged) => match self.repo.shelve_create(&name, include_staged) {
+                Ok(_) => {
+                    self.notifications.notify(&format!("Shelve created: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Shelve create failed: {}", e));
+                }
+            },
+            Action::ShelveApply(index, pop) => {
+                let cmd_name = if pop { "popped" } else { "applied" };
+                match self.repo.shelve_apply(index, pop) {
+                    Ok(_) => {
+                        self.notifications
+                            .notify(&format!("Shelve@{} {}", index, cmd_name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications
+                            .notify_error(&format!("Shelve {} failed: {}", cmd_name, e));
+                    }
+                }
+            }
+            Action::ShelveDrop(index) => match self.repo.shelve_drop(index) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Shelve@{} dropped", index));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Shelve drop failed: {}", e));
                 }
             },
             Action::Help => {
@@ -1074,6 +1260,71 @@ impl App {
                     }
                 }
             }
+            Action::AddRemote(name, url) => {
+                match self.repo.add_remote(&name, &url) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Added remote: {} -> {}", name, url));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to add remote: {}", e));
+                    }
+                }
+            }
+            Action::RemoveRemote(name) => {
+                match self.repo.remove_remote(&name) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Removed remote: {}", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to remove remote: {}", e));
+                    }
+                }
+            }
+            Action::RenameRemote(old, new) => {
+                match self.repo.rename_remote(&old, &new) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Renamed remote: {} -> {}", old, new));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to rename remote: {}", e));
+                    }
+                }
+            }
+            Action::FetchRemote(name) => {
+                match self.repo.fetch_remote(&name) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Fetched remote: {}", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to fetch remote: {}", e));
+                    }
+                }
+            }
+            Action::ShowRemoteBranches(name) => {
+                // Show branches for this remote as a notification
+                match self.repo.branches() {
+                    Ok(branches) => {
+                        let remote_branches: Vec<String> = branches
+                            .iter()
+                            .filter(|b| b.name.starts_with(&format!("remotes/{}/", name)))
+                            .map(|b| b.name.clone())
+                            .collect();
+                        if remote_branches.is_empty() {
+                            self.notifications.notify(&format!("No branches found on remote: {}", name));
+                        } else {
+                            let branch_list = remote_branches.join(", ");
+                            self.notifications.notify(&format!("{} branches: {}", name, branch_list));
+                        }
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Failed to list branches: {}", e));
+                    }
+                }
+            }
         }
     }
 
@@ -1156,6 +1407,8 @@ impl App {
         self.branch_panel.refresh();
         self.log_panel.refresh();
         self.stash_panel.refresh();
+        self.remote_panel.refresh();
+        self.shelve_panel.refresh();
     }
 
     fn draw_frame(&mut self, f: &mut Frame) {
@@ -1180,6 +1433,8 @@ impl App {
             View::Branches => self.branch_panel.render(f, view_area),
             View::Log => self.log_panel.render(f, view_area),
             View::Stash => self.stash_panel.render(f, view_area),
+            View::Remote => self.remote_panel.render(f, view_area),
+            View::Shelve => self.shelve_panel.render(f, view_area),
         }
 
         // Command line at bottom
@@ -1223,6 +1478,11 @@ impl App {
             self.draw_reset_dialog(f, size, reset_state);
         }
 
+        // Merge dialog overlay
+        if let Some(ref merge_state) = self.merge_dialog {
+            self.draw_merge_dialog(f, size, merge_state);
+        }
+
         // Gitignore popup overlay
         if let Some((ref content, scroll)) = self.gitignore_popup {
             self.draw_gitignore_popup(f, size, content, &scroll);
@@ -1261,7 +1521,7 @@ impl App {
         self.filelist.focus();
         self.filelist.render(f, chunks[1]);
         let help = Paragraph::new(
-            " 1:branches 2:log 4:stash ?:help :commands s:stage S:stage-all c:commit q:quit",
+            " 1:branches 2:log 4:stash R:remote S:shelve ?:help :commands s:stage S:stage-all c:commit q:quit",
         )
         .style(self.styles.text_secondary);
         f.render_widget(help, chunks[2]);
@@ -1443,6 +1703,57 @@ impl App {
         ];
 
         self.draw_input_dialog(f, area, 11, " Reset ", ratatui::style::Color::Red, lines);
+    }
+
+    fn draw_merge_dialog(&self, f: &mut Frame, area: Rect, merge_state: &(String, MergePreview)) {
+        let (branch, preview) = merge_state;
+
+        let files_preview = if preview.files_changed.len() > 5 {
+            let first_five = preview.files_changed[..5].join(", ");
+            format!("{} +{} more", first_five, preview.files_changed.len() - 5)
+        } else {
+            preview.files_changed.join(", ")
+        };
+
+        let lines = vec![
+            Line::from(Span::styled(
+                " Merge Preview ",
+                Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Branch: ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(branch, Style::default().fg(ratatui::style::Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Commits: ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(preview.commits_count.to_string(), Style::default().fg(ratatui::style::Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Fast-forward: ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(if preview.can_ff { "Yes" } else { "No" },
+                    if preview.can_ff { Style::default().fg(ratatui::style::Color::Green) } else { Style::default().fg(ratatui::style::Color::Yellow) }),
+            ]),
+            Line::from(vec![
+                Span::styled("  Files: ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(files_preview, Style::default().fg(ratatui::style::Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  f", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("=Fast-forward  ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled("n", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("=No-ff  ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled("s", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("=Squash  ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled("q", Style::default().fg(ratatui::style::Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled("=Cancel", Style::default().fg(ratatui::style::Color::DarkGray)),
+            ]),
+        ];
+
+        self.draw_input_dialog(f, area, 12, " Merge ", ratatui::style::Color::Green, lines);
     }
 
     /// Draw a centered input dialog with common styling pattern.

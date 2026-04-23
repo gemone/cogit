@@ -319,8 +319,13 @@ impl StashPanel {
                 self.shelve_state.select(Some(i.saturating_sub(10)));
                 None
             }
-            KeyCode::Enter => self.selected_shelve_name().map(Action::ShelveApply),
-            KeyCode::Char('d') => self.selected_shelve_name().map(Action::ShelveDrop),
+            KeyCode::Enter => self.selected_shelve_name().map(|name| Action::ShelveApply(
+                self.shelve_entries.iter().position(|e| e.name == name).unwrap_or(0),
+                false,
+            )),
+            KeyCode::Char('d') => self.selected_shelve_name().map(|name| Action::ShelveDrop(
+                self.shelve_entries.iter().position(|e| e.name == name).unwrap_or(0),
+            )),
             _ => None,
         }
     }
