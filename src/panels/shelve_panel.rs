@@ -57,11 +57,6 @@ impl ShelvePanel {
         self.entries.get(i).map(|e| e.name.clone())
     }
 
-    fn selected_shelve_index(&self) -> Option<usize> {
-        let i = self.state.selected().unwrap_or(0);
-        self.entries.get(i).map(|e| e.index)
-    }
-
     fn close_diff(&mut self) {
         self.diff_popup = None;
     }
@@ -221,19 +216,19 @@ impl Panel for ShelvePanel {
                 None
             }
             KeyCode::Char('p') => {
-                if let Some(idx) = self.selected_shelve_index() {
+                if let Some(idx) = self.selected_index() {
                     return Some(Action::ShelveApply(idx, false));
                 }
                 None
             }
             KeyCode::Char('a') => {
-                if let Some(idx) = self.selected_shelve_index() {
+                if let Some(idx) = self.selected_index() {
                     return Some(Action::ShelveApply(idx, true));
                 }
                 None
             }
             KeyCode::Char('d') => {
-                if let Some(idx) = self.selected_shelve_index() {
+                if let Some(idx) = self.selected_index() {
                     return Some(Action::ShelveDrop(idx));
                 }
                 None

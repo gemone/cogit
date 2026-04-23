@@ -12,54 +12,56 @@ pub struct ShelveEntry {
 
 impl Repository {
     pub fn list_shelves(&self) -> Result<Vec<ShelveEntry>> {
-        let output = self.git_cmd(&["stash", "list"])?;
+        // Use git log -g to get stash entries with refs in one command (avoids O(n) rev-parse calls)
+        let output = self.git_cmd(&[
+            "log",
+            "-g",
+            "--format=%H %gd %s",
+            "--all",
+            "refs/stash",
+        ])?;
         let mut entries = Vec::new();
 
         for line in output.lines() {
             if line.is_empty() {
                 continue;
             }
-            // Format: stash@{0}: On <branch>: shelve:<name>:<timestamp>
-            if let Some(colon_pos) = line.find(':') {
-                let prefix = &line[..colon_pos];
-                let rest = &line[colon_pos + 1..];
+            // Format: <hash> stash@{0} <message>
+            let parts: Vec<&str> = line.splitn(3, ' ').collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let hash = parts[0].to_string();
+            let refname = parts[1].to_string();
+            let message = parts[2..].join(" ");
 
-                // Extract index from "stash@{N}"
-                let index = if let Some(start) = prefix.find('{') {
-                    if let Some(end) = prefix.find('}') {
-                        prefix[start + 1..end].parse::<usize>().unwrap_or(0)
-                    } else {
-                        0
-                    }
+            // Extract index from "stash@{N}"
+            let index = if let Some(start) = refname.find('{') {
+                if let Some(end) = refname.find('}') {
+                    refname[start + 1..end].parse::<usize>().unwrap_or(0)
                 } else {
                     0
-                };
+                }
+            } else {
+                0
+            };
 
-                // Parse message: " On <branch>: shelve:<name>:<timestamp>"
-                let message = rest.trim().to_string();
-                if let Some(shelve_prefix) = message.find("shelve:") {
-                    let after_shelve = &message[shelve_prefix + 7..];
-                    // Format: name:timestamp (with optional staged marker)
-                    let parts: Vec<&str> = after_shelve.splitn(3, ':').collect();
-                    if parts.len() >= 2 {
-                        let name = parts[0].to_string();
-                        let date = parts.get(1).unwrap_or(&"").to_string();
-                        let has_staged = parts.len() >= 3 && parts[2].contains("staged");
+            // Parse message: "shelve:<name>:<timestamp>" or "shelve:<name>:<timestamp>:staged"
+            if let Some(shelve_prefix) = message.find("shelve:") {
+                let after_shelve = &message[shelve_prefix + 7..];
+                let parts: Vec<&str> = after_shelve.splitn(3, ':').collect();
+                if parts.len() >= 2 {
+                    let name = parts[0].to_string();
+                    let date = parts.get(1).unwrap_or(&"").to_string();
+                    let has_staged = parts.len() >= 3 && parts[2].contains("staged");
 
-                        let hash = self
-                            .git_cmd(&["rev-parse", &format!("stash@{{{}}}", index)])
-                            .unwrap_or_default()
-                            .trim()
-                            .to_string();
-
-                        entries.push(ShelveEntry {
-                            index,
-                            name,
-                            date,
-                            hash,
-                            has_staged,
-                        });
-                    }
+                    entries.push(ShelveEntry {
+                        index,
+                        name,
+                        date,
+                        hash,
+                        has_staged,
+                    });
                 }
             }
         }
@@ -79,7 +81,12 @@ impl Repository {
             format!("shelve:{}:{}", name, timestamp)
         };
 
-        let args = vec!["stash", "push", "-m", &message];
+        let mut args = vec!["stash", "push", "-m", &message];
+        if !include_staged {
+            // Only keep index when NOT including staged changes (i.e., when include_staged=false,
+            // we want to preserve the index state as-is after stashing)
+            args.push("--keep-index");
+        }
         let _output = self.git_cmd(&args)?;
         Ok(format!("Created shelve: {}", name))
     }
@@ -87,7 +94,7 @@ impl Repository {
     pub fn shelve_apply(&self, index: usize, pop: bool) -> Result<String> {
         let refname = format!("stash@{{{}}}", index);
         let cmd = if pop { "pop" } else { "apply" };
-        let output = self.git_cmd(&["stash", cmd, &refname])?;
+        let output = self.git_cmd(&["stash", cmd, "--index", &refname])?;
         Ok(output)
     }
 
@@ -128,7 +135,7 @@ mod tests {
     use std::fs;
 
     fn setup_test_repo(dir_name: &str) -> (Repository, std::path::PathBuf) {
-        let dir = std::path::PathBuf::from(format!("/tmp/cogit-test-{}", dir_name));
+        let dir = std::env::temp_dir().join(format!("cogit-test-{}", dir_name));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let repo = Repository::open(&dir).unwrap();

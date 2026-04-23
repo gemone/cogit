@@ -442,9 +442,13 @@ impl Repository {
             .filter(|s| !s.is_empty())
             .collect();
 
-        // Check for conflicts using merge-tree
+        // Check for conflicts using merge-tree (needs merge-base as first arg)
         let has_conflicts = if commits_count > 0 {
-            self.git_cmd(&["merge-tree", "HEAD", branch])
+            let base = self
+                .git_cmd(&["merge-base", "HEAD", branch])
+                .map(|b| b.trim().to_string())
+                .unwrap_or_default();
+            self.git_cmd(&["merge-tree", &base, "HEAD", branch])
                 .map(|output| output.contains("<<"))
                 .unwrap_or(false)
         } else {
@@ -487,7 +491,11 @@ impl Repository {
     }
 
     pub fn get_rebase_state(&self) -> Result<RebaseState> {
-        let git_dir = self.path.join(".git");
+        // Use git rev-parse --git-path to handle linked worktrees correctly
+        let git_dir = self
+            .git_cmd(&["rev-parse", "--git-path", "."])
+            .map(|p| self.path.join(p.trim()))
+            .unwrap_or_else(|_| self.path.join(".git"));
         let rebase_merge_dir = git_dir.join("rebase-merge");
         let rebase_apply_dir = git_dir.join("rebase-apply");
 
@@ -697,7 +705,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let repo = Repository::open(&dir).unwrap();
-        repo.git_cmd(&["init"]).unwrap();
+        // Use -b main to ensure consistent branch name across git versions
+        repo.git_cmd(&["init", "-b", "main"]).unwrap();
         repo.git_cmd(&["config", "user.name", "Test"]).unwrap();
         repo.git_cmd(&["config", "user.email", "test@test.com"]).unwrap();
         fs::write(dir.join("file.txt"), "initial\n").unwrap();
@@ -706,11 +715,26 @@ mod tests {
         (repo, dir)
     }
 
+    fn get_default_branch_name() -> String {
+        // Query the default branch name from git config or fallback to "main"
+        std::process::Command::new("git")
+            .args(["config", "--global", "init.defaultBranch"])
+            .output()
+            .ok()
+            .and_then(|o| if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            })
+            .unwrap_or_else(|| "main".to_string())
+    }
+
     #[test]
     fn test_current_branch() {
         let (repo, _dir) = setup_test_repo("current-branch");
         let branch = repo.current_branch().unwrap();
-        assert_eq!(branch, "main");
+        let expected = Self::get_default_branch_name();
+        assert_eq!(branch, expected);
     }
 
     #[test]
@@ -718,7 +742,8 @@ mod tests {
         let (repo, _dir) = setup_test_repo("branches");
         let branches = repo.branches().unwrap();
         assert!(!branches.is_empty());
-        let main_branch = branches.iter().find(|b| b.name == "main");
+        let expected = Self::get_default_branch_name();
+        let main_branch = branches.iter().find(|b| b.name == expected);
         assert!(main_branch.is_some());
         assert!(main_branch.unwrap().is_current);
     }

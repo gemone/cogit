@@ -61,7 +61,7 @@ pub struct App {
     branch_dialog: Option<String>,              // branch name input
     rename_dialog: Option<(String, String)>, // (old_name, new_name being typed)
     reset_dialog: Option<(String, String, bool)>, // (mode, path, selecting_mode)
-    pending_checkout: Option<String>, // branch name waiting for stash confirmation
+    pending_checkout: Option<(String, bool)>, // (branch name, is_remote) waiting for stash confirmation
     gitignore_popup: Option<(String, u16)>, // (content, scroll)
     merge_dialog: Option<(String, MergePreview)>, // (branch, preview)
     help_overlay: HelpOverlay,
@@ -296,13 +296,18 @@ impl App {
         if self.pending_checkout.is_some() {
             match key.code {
                 KeyCode::Char('s') | KeyCode::Enter => {
-                    let branch = self.pending_checkout.take();
-                    if let Some(name) = branch {
+                    if let Some((name, is_remote)) = self.pending_checkout.take() {
                         // Smart Checkout: shelve → checkout → unshelve
                         let shelve_name = format!("smart-checkout-{}-{}", name.replace('/', "-"), std::process::id());
+
                         match self.repo.shelve_create(&shelve_name, true) {
                             Ok(_) => {
-                                match self.repo.checkout(&name) {
+                                match if is_remote {
+                                    // For remote branches, try to checkout locally first
+                                    self.repo.checkout_remote_branch(&name)
+                                } else {
+                                    self.repo.checkout(&name)
+                                } {
                                     Ok(_) => {
                                         // Try to unshelve immediately
                                         match self.repo.shelve_apply(0, true) {
@@ -327,8 +332,7 @@ impl App {
                     }
                 }
                 KeyCode::Char('f') => {
-                    let branch = self.pending_checkout.take();
-                    if let Some(name) = branch {
+                    if let Some((name, _)) = self.pending_checkout.take() {
                         // Force Checkout: discard local changes and checkout
                         match self.repo.checkout_force(&name) {
                             Ok(_) => {
@@ -354,8 +358,18 @@ impl App {
         if self.merge_dialog.is_some() {
             match key.code {
                 KeyCode::Char('f') => {
+                    // Fast-forward merge - consume the dialog and do the merge directly
                     if let Some((branch, _)) = self.merge_dialog.take() {
-                        self.dispatch(Action::MergeBranch(branch));
+                        match self.repo.smart_merge(&branch, MergeStrategy::FastForward) {
+                            Ok(output) => {
+                                self.notifications.notify(&format!("Merged: {} {}", branch, output));
+                                self.refresh_all();
+                            }
+                            Err(e) => {
+                                self.notifications
+                                    .notify_error(&format!("Merge failed: {}", e));
+                            }
+                        }
                     }
                 }
                 KeyCode::Char('n') => {
@@ -821,7 +835,7 @@ impl App {
                 // Check for uncommitted changes (staged, unstaged, and untracked)
                 let has_changes = !self.filelist.files.is_empty();
                 if has_changes {
-                    self.pending_checkout = Some(name.clone());
+                    self.pending_checkout = Some((name.clone(), false)); // false = local branch
                 } else {
                     // No changes, proceed directly
                     match self.repo.checkout(&name) {
@@ -839,7 +853,7 @@ impl App {
             Action::CheckoutRemoteBranch(name) => {
                 let has_changes = !self.filelist.files.is_empty();
                 if has_changes {
-                    self.pending_checkout = Some(name.clone());
+                    self.pending_checkout = Some((name.clone(), true)); // true = remote branch
                 } else {
                     match self.repo.checkout_remote_branch(&name) {
                         Ok(msg) => {
@@ -1511,7 +1525,7 @@ impl App {
         }
 
         // Smart checkout dialog overlay
-        if let Some(ref branch) = self.pending_checkout {
+        if let Some((ref branch, _)) = self.pending_checkout {
             self.draw_smart_checkout_dialog(f, size, branch);
         }
 
@@ -1553,7 +1567,7 @@ impl App {
         self.filelist.focus();
         self.filelist.render(f, chunks[1]);
         let help = Paragraph::new(
-            " 1:branches 2:log 4:stash R:remote S:shelve ?:help :commands s:stage S:stage-all c:commit q:quit",
+            " 1:branches 2:log 4:stash R:remote s:shelve S:stage-all c:commit q:quit ?:help :commands",
         )
         .style(self.styles.text_secondary);
         f.render_widget(help, chunks[2]);

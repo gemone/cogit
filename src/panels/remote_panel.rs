@@ -24,6 +24,14 @@ pub struct RemotePanel {
     input_prompt: String,
     input_callback: Option<fn(String, String) -> Action>,
     input_arg: String,
+    // Two-step input state for AddRemote
+    add_remote_step: AddRemoteStep,
+    is_add_remote_flow: bool,
+}
+
+enum AddRemoteStep {
+    Name,   // Waiting for remote name
+    Url,    // Waiting for remote URL
 }
 
 impl RemotePanel {
@@ -41,6 +49,8 @@ impl RemotePanel {
             input_prompt: String::new(),
             input_callback: None,
             input_arg: String::new(),
+            add_remote_step: AddRemoteStep::Name,
+            is_add_remote_flow: false,
         };
         panel.refresh();
         panel
@@ -150,7 +160,29 @@ impl Panel for RemotePanel {
                     let cb = self.input_callback.take();
                     self.input_mode = false;
                     if let Some(callback) = cb {
-                        return Some(callback(arg, buf));
+                        if self.is_add_remote_flow {
+                            self.is_add_remote_flow = false;
+                            match self.add_remote_step {
+                                AddRemoteStep::Name => {
+                                    // First step: got the name, now ask for URL
+                                    self.input_mode = true;
+                                    self.input_prompt = "url".to_string();
+                                    self.input_buffer.clear();
+                                    self.input_callback = Some(callback);
+                                    self.input_arg = buf; // Store the name in input_arg
+                                    self.add_remote_step = AddRemoteStep::Url;
+                                    self.is_add_remote_flow = true; // Still in AddRemote flow
+                                    return None;
+                                }
+                                AddRemoteStep::Url => {
+                                    // Second step: we have both name (arg) and url (buf)
+                                    self.add_remote_step = AddRemoteStep::Name;
+                                    return Some(callback(arg, buf));
+                                }
+                            }
+                        } else {
+                            return Some(callback(arg, buf));
+                        }
                     }
                     return None;
                 }
@@ -177,8 +209,8 @@ impl Panel for RemotePanel {
                 self.input_buffer.clear();
                 self.input_callback = Some(Action::AddRemote);
                 self.input_arg.clear();
-                // Two-step input: first name, then URL
-                // For simplicity, we'll use a format like "name url" in one line
+                self.add_remote_step = AddRemoteStep::Name;
+                self.is_add_remote_flow = true;
                 None
             }
             KeyCode::Char('d') => self.selected_remote_name().map(Action::RemoveRemote),
