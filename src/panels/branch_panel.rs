@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -145,7 +145,7 @@ impl Panel for BranchPanel {
         }
 
         // Handle navigation with the shared helper
-        if handle_list_navigation(&mut self.state, self.filtered_indices.len(), key.code) {
+        if handle_list_navigation(&mut self.state, self.filtered_indices.len(), key) {
             return None;
         }
 
@@ -153,7 +153,7 @@ impl Panel for BranchPanel {
             KeyCode::Enter => self.current_branch_name().map(Action::CheckoutBranch),
             KeyCode::Char('n') => Some(Action::CreateBranchDialog),
             KeyCode::Char('R') => self.current_branch_name().map(Action::RenameBranchDialog),
-            KeyCode::Char('d') => self.current_branch_name().map(Action::DeleteBranch),
+            KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.current_branch_name().map(Action::DeleteBranch),
             KeyCode::Char('f') => Some(Action::FetchAll),
             KeyCode::Char('p') => Some(Action::PushCurrent),
             KeyCode::Char('P') => Some(Action::PullCurrent),

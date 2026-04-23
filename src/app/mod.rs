@@ -151,6 +151,15 @@ impl App {
                     return;
                 }
 
+        // Ignore all other keys while a popup is active so they do not
+        // fall through to the normal app dispatch.
+        if self.ref_diff_popup.is_some()
+            || self.diff_popup.is_some()
+            || self.gitignore_popup.is_some()
+        {
+            return;
+        }
+
         // Commit dialog takes priority
         if let Some(ref mut msg) = self.commit_dialog {
             match key.code {
