@@ -686,3 +686,63 @@ impl Repository {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn setup_test_repo(dir_name: &str) -> (Repository, std::path::PathBuf) {
+        let dir = std::path::PathBuf::from(format!("/tmp/cogit-test-{}", dir_name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let repo = Repository::open(&dir).unwrap();
+        repo.git_cmd(&["init"]).unwrap();
+        repo.git_cmd(&["config", "user.name", "Test"]).unwrap();
+        repo.git_cmd(&["config", "user.email", "test@test.com"]).unwrap();
+        fs::write(dir.join("file.txt"), "initial\n").unwrap();
+        repo.git_cmd(&["add", "."]).unwrap();
+        repo.git_cmd(&["commit", "-m", "initial"]).unwrap();
+        (repo, dir)
+    }
+
+    #[test]
+    fn test_current_branch() {
+        let (repo, _dir) = setup_test_repo("current-branch");
+        let branch = repo.current_branch().unwrap();
+        assert_eq!(branch, "main");
+    }
+
+    #[test]
+    fn test_branches() {
+        let (repo, _dir) = setup_test_repo("branches");
+        let branches = repo.branches().unwrap();
+        assert!(!branches.is_empty());
+        let main_branch = branches.iter().find(|b| b.name == "main");
+        assert!(main_branch.is_some());
+        assert!(main_branch.unwrap().is_current);
+    }
+
+    #[test]
+    fn test_checkout() {
+        let (repo, _dir) = setup_test_repo("checkout");
+        repo.create_branch("feature").unwrap();
+        repo.checkout("feature").unwrap();
+        let branch = repo.current_branch().unwrap();
+        assert_eq!(branch, "feature");
+    }
+
+    #[test]
+    fn test_stage_and_unstage() {
+        let (repo, dir) = setup_test_repo("stage-unstage");
+        fs::write(dir.join("file.txt"), "modified\n").unwrap();
+        repo.stage("file.txt").unwrap();
+        let status = repo.status().unwrap();
+        assert!(!status.staged.is_empty());
+
+        repo.unstage("file.txt").unwrap();
+        let status = repo.status().unwrap();
+        assert!(status.staged.is_empty());
+        assert!(!status.unstaged.is_empty());
+    }
+}

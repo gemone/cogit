@@ -121,3 +121,86 @@ impl Repository {
         self.shelve_drop(entry.index)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn setup_test_repo(dir_name: &str) -> (Repository, std::path::PathBuf) {
+        let dir = std::path::PathBuf::from(format!("/tmp/cogit-test-{}", dir_name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let repo = Repository::open(&dir).unwrap();
+        repo.git_cmd(&["init"]).unwrap();
+        repo.git_cmd(&["config", "user.name", "Test"]).unwrap();
+        repo.git_cmd(&["config", "user.email", "test@test.com"]).unwrap();
+        fs::write(dir.join("file.txt"), "initial\n").unwrap();
+        repo.git_cmd(&["add", "."]).unwrap();
+        repo.git_cmd(&["commit", "-m", "initial"]).unwrap();
+        (repo, dir)
+    }
+
+    #[test]
+    fn test_shelve_create_and_list() {
+        let (repo, dir) = setup_test_repo("shelve");
+        fs::write(dir.join("file.txt"), "modified\n").unwrap();
+        repo.shelve_create("my-shelve", false).unwrap();
+        let shelves = repo.list_shelves().unwrap();
+        assert_eq!(shelves.len(), 1);
+        assert_eq!(shelves[0].name, "my-shelve");
+    }
+
+    #[test]
+    fn test_shelve_apply() {
+        let (repo, dir) = setup_test_repo("shelve-apply");
+        fs::write(dir.join("file.txt"), "modified\n").unwrap();
+        repo.shelve_create("test-apply", false).unwrap();
+
+        // apply (pop=false) should restore but keep stash
+        repo.shelve_apply(0, false).unwrap();
+        let content = fs::read_to_string(dir.join("file.txt")).unwrap();
+        assert_eq!(content, "modified\n");
+        let shelves = repo.list_shelves().unwrap();
+        assert_eq!(shelves.len(), 1); // stash preserved
+    }
+
+    #[test]
+    fn test_shelve_pop() {
+        let (repo, dir) = setup_test_repo("shelve-pop");
+        fs::write(dir.join("file.txt"), "modified\n").unwrap();
+        repo.shelve_create("test-pop", false).unwrap();
+        let shelves = repo.list_shelves().unwrap();
+        assert_eq!(shelves.len(), 1);
+
+        repo.shelve_apply(0, true).unwrap(); // pop=true
+        let content = fs::read_to_string(dir.join("file.txt")).unwrap();
+        assert_eq!(content, "modified\n");
+        let shelves = repo.list_shelves().unwrap();
+        assert!(shelves.is_empty());
+    }
+
+    #[test]
+    fn test_shelve_drop() {
+        let (repo, dir) = setup_test_repo("shelve-drop");
+        fs::write(dir.join("file.txt"), "modified\n").unwrap();
+        repo.shelve_create("test-drop", false).unwrap();
+        let shelves = repo.list_shelves().unwrap();
+        assert_eq!(shelves.len(), 1);
+
+        repo.shelve_drop(0).unwrap();
+        let shelves = repo.list_shelves().unwrap();
+        assert!(shelves.is_empty());
+    }
+
+    #[test]
+    fn test_shelve_apply_by_name() {
+        let (repo, dir) = setup_test_repo("shelve-by-name");
+        fs::write(dir.join("file.txt"), "modified\n").unwrap();
+        repo.shelve_create("named-shelve", false).unwrap();
+
+        repo.shelve_apply_by_name("named-shelve", false).unwrap();
+        let content = fs::read_to_string(dir.join("file.txt")).unwrap();
+        assert_eq!(content, "modified\n");
+    }
+}
