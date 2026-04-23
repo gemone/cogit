@@ -701,7 +701,7 @@ mod tests {
     use std::fs;
 
     fn setup_test_repo(dir_name: &str) -> (Repository, std::path::PathBuf) {
-        let dir = std::path::PathBuf::from(format!("/tmp/cogit-test-{}", dir_name));
+        let dir = std::env::temp_dir().join(format!("cogit-test-{}", dir_name));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let repo = Repository::open(&dir).unwrap();

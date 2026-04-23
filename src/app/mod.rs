@@ -1567,7 +1567,7 @@ impl App {
         self.filelist.focus();
         self.filelist.render(f, chunks[1]);
         let help = Paragraph::new(
-            " 1:branches 2:log 4:stash R:remote s:shelve S:stage-all c:commit q:quit ?:help :commands",
+            " 1:branches 2:log 4:stash R:remote s:shelve A:stage-all c:commit q:quit ?:help :commands",
         )
         .style(self.styles.text_secondary);
         f.render_widget(help, chunks[2]);
