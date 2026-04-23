@@ -152,6 +152,8 @@ impl Panel for RemotePanel {
                     self.input_buffer.clear();
                     self.input_callback = None;
                     self.input_arg.clear();
+                    self.add_remote_step = AddRemoteStep::Name;
+                    self.is_add_remote_flow = false;
                     return None;
                 }
                 KeyCode::Enter => {

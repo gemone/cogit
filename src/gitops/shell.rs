@@ -733,7 +733,7 @@ mod tests {
     fn test_current_branch() {
         let (repo, _dir) = setup_test_repo("current-branch");
         let branch = repo.current_branch().unwrap();
-        let expected = Self::get_default_branch_name();
+        let expected = get_default_branch_name();
         assert_eq!(branch, expected);
     }
 
@@ -742,7 +742,7 @@ mod tests {
         let (repo, _dir) = setup_test_repo("branches");
         let branches = repo.branches().unwrap();
         assert!(!branches.is_empty());
-        let expected = Self::get_default_branch_name();
+        let expected = get_default_branch_name();
         let main_branch = branches.iter().find(|b| b.name == expected);
         assert!(main_branch.is_some());
         assert!(main_branch.unwrap().is_current);
