@@ -452,7 +452,7 @@ impl App {
             KeyCode::Char('s') => {
                 self.dispatch(Action::Stage);
             }
-            KeyCode::Char('S') => {
+            KeyCode::Char('A') => {
                 self.dispatch(Action::StageAll);
             }
             KeyCode::Char('u') => {

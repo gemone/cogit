@@ -80,7 +80,7 @@ impl Repository {
         };
 
         let args = vec!["stash", "push", "-m", &message];
-        let output = self.git_cmd(&args)?;
+        let _output = self.git_cmd(&args)?;
         Ok(format!("Created shelve: {}", name))
     }
 

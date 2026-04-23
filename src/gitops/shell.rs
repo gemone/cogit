@@ -557,7 +557,7 @@ impl Repository {
             if parts.len() >= 2 {
                 let name = parts[0].to_string();
                 let url = parts[1].to_string();
-                let direction = parts.get(2).map(|s| s.trim_matches('(')).unwrap_or("fetch");
+                let _direction = parts.get(2).map(|s| s.trim_matches('(')).unwrap_or("fetch");
 
                 if seen.insert(name.clone()) {
                     let fetch_refspec = format!("+refs/heads/*:refs/remotes/{}/*", name);
