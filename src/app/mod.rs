@@ -114,6 +114,22 @@ impl App {
     }
 
     fn handle_event(&mut self, key: KeyEvent) {
+        // Handle Esc/q to close any popup first
+        if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
+            if self.ref_diff_popup.is_some() {
+                self.ref_diff_popup = None;
+                return;
+            }
+            if self.diff_popup.is_some() {
+                self.diff_popup = None;
+                return;
+            }
+            if self.gitignore_popup.is_some() {
+                self.gitignore_popup = None;
+                return;
+            }
+        }
+
         // Ref diff popup takes priority
         if self.ref_diff_popup.is_some()
             && let Some((_, _, scroll)) = self.ref_diff_popup.as_mut()
