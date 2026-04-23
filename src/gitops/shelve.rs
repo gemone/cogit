@@ -13,13 +13,9 @@ pub struct ShelveEntry {
 impl Repository {
     pub fn list_shelves(&self) -> Result<Vec<ShelveEntry>> {
         // Use git log -g to get stash entries with refs in one command (avoids O(n) rev-parse calls)
-        let output = self.git_cmd(&[
-            "log",
-            "-g",
-            "--format=%H %gd %s",
-            "--all",
-            "refs/stash",
-        ])?;
+        let output = self
+            .git_cmd(&["log", "-g", "--format=%H %gd %s", "refs/stash"])
+            .unwrap_or_default();
         let mut entries = Vec::new();
 
         for line in output.lines() {
