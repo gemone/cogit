@@ -1,5 +1,6 @@
 pub mod cmdline;
 pub mod help;
+pub mod navigation;
 pub mod notification;
 pub mod styles;
 
@@ -113,131 +114,42 @@ impl App {
     }
 
     fn handle_event(&mut self, key: KeyEvent) {
-        // Ref diff popup takes priority
-        if self.ref_diff_popup.is_some() {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    self.ref_diff_popup = None;
-                }
-                KeyCode::Char('j') | KeyCode::Down => {
-                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
-                        *scroll = scroll.saturating_add(1);
-                    }
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
-                        *scroll = scroll.saturating_sub(1);
-                    }
-                }
-                KeyCode::Char('G') => {
-                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
-                        *scroll = u16::MAX;
-                    }
-                }
-                KeyCode::Char('g') => {
-                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
-                        *scroll = 0;
-                    }
-                }
-                KeyCode::PageDown | KeyCode::Char('J') => {
-                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
-                        *scroll = scroll.saturating_add(15);
-                    }
-                }
-                KeyCode::PageUp | KeyCode::Char('K') => {
-                    if let Some((_, _, ref mut scroll)) = self.ref_diff_popup {
-                        *scroll = scroll.saturating_sub(15);
-                    }
-                }
-                KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Char('u') | KeyCode::Char('U') => {
-                    // Ignore scroll-related keys to prevent accidental navigation
-                }
-                _ => {}
+        // Handle Esc/q to close any popup first
+        if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
+            if self.ref_diff_popup.is_some() {
+                self.ref_diff_popup = None;
+                return;
             }
-            return;
+            if self.diff_popup.is_some() {
+                self.diff_popup = None;
+                return;
+            }
+            if self.gitignore_popup.is_some() {
+                self.gitignore_popup = None;
+                return;
+            }
         }
+
+        // Ref diff popup takes priority
+        if self.ref_diff_popup.is_some()
+            && let Some((_, _, scroll)) = self.ref_diff_popup.as_mut()
+                && Self::handle_popup_scroll(Some(scroll), key.code) {
+                    return;
+                }
 
         // Diff popup takes priority
-        if self.diff_popup.is_some() {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    self.diff_popup = None;
+        if self.diff_popup.is_some()
+            && let Some((_, _, scroll)) = self.diff_popup.as_mut()
+                && Self::handle_popup_scroll(Some(scroll), key.code) {
+                    return;
                 }
-                KeyCode::Char('j') | KeyCode::Down => {
-                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
-                        *scroll = scroll.saturating_add(1);
-                    }
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
-                        *scroll = scroll.saturating_sub(1);
-                    }
-                }
-                KeyCode::Char('G') => {
-                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
-                        *scroll = u16::MAX;
-                    }
-                }
-                KeyCode::Char('g') => {
-                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
-                        *scroll = 0;
-                    }
-                }
-                KeyCode::PageDown | KeyCode::Char('J') => {
-                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
-                        *scroll = scroll.saturating_add(15);
-                    }
-                }
-                KeyCode::PageUp | KeyCode::Char('K') => {
-                    if let Some((_, _, ref mut scroll)) = self.diff_popup {
-                        *scroll = scroll.saturating_sub(15);
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
 
         // Gitignore popup takes priority
-        if self.gitignore_popup.is_some() {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    self.gitignore_popup = None;
+        if self.gitignore_popup.is_some()
+            && let Some((_, scroll)) = self.gitignore_popup.as_mut()
+                && Self::handle_popup_scroll(Some(scroll), key.code) {
+                    return;
                 }
-                KeyCode::Char('j') | KeyCode::Down => {
-                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
-                        *scroll = scroll.saturating_add(1);
-                    }
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
-                        *scroll = scroll.saturating_sub(1);
-                    }
-                }
-                KeyCode::Char('G') => {
-                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
-                        *scroll = u16::MAX;
-                    }
-                }
-                KeyCode::Char('g') => {
-                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
-                        *scroll = 0;
-                    }
-                }
-                KeyCode::PageDown | KeyCode::Char('J') => {
-                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
-                        *scroll = scroll.saturating_add(15);
-                    }
-                }
-                KeyCode::PageUp | KeyCode::Char('K') => {
-                    if let Some((_, ref mut scroll)) = self.gitignore_popup {
-                        *scroll = scroll.saturating_sub(15);
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
 
         // Commit dialog takes priority
         if let Some(ref mut msg) = self.commit_dialog {
@@ -1198,6 +1110,38 @@ impl App {
         }
     }
 
+    /// Handle popup scroll keys. Returns true if the key was handled.
+    fn handle_popup_scroll(scroll: Option<&mut u16>, code: KeyCode) -> bool {
+        let Some(scroll) = scroll else { return false; };
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                *scroll = scroll.saturating_add(1);
+                true
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Char('G') => {
+                *scroll = u16::MAX;
+                true
+            }
+            KeyCode::Char('g') => {
+                *scroll = 0;
+                true
+            }
+            KeyCode::PageDown | KeyCode::Char('J') => {
+                *scroll = scroll.saturating_add(15);
+                true
+            }
+            KeyCode::PageUp | KeyCode::Char('K') => {
+                *scroll = scroll.saturating_sub(15);
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn refresh_all(&mut self) {
         self.filelist.refresh();
         self.branch_panel.refresh();
@@ -1368,19 +1312,6 @@ impl App {
     }
 
     fn draw_commit_dialog(&self, f: &mut Frame, area: Rect, msg: &str) {
-        let popup_w = (area.width * 3 / 5).max(40);
-        let popup_h = 9;
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
         let staged_count = self.filelist.files.iter().filter(|f| f.staged).count();
 
         let input_display = if msg.is_empty() {
@@ -1418,29 +1349,10 @@ impl App {
             )),
         ];
 
-        let paragraph = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Commit ")
-                .border_style(Style::default().fg(ratatui::style::Color::Green)),
-        );
-        f.render_widget(paragraph, popup_area);
+        self.draw_input_dialog(f, area, 9, " Commit ", ratatui::style::Color::Green, lines);
     }
 
     fn draw_branch_dialog(&self, f: &mut Frame, area: Rect, name: &str) {
-        let popup_w = (area.width * 3 / 5).max(40);
-        let popup_h = 7;
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
         let input_display = if name.is_empty() {
             "type branch name...".to_string()
         } else {
@@ -1469,29 +1381,11 @@ impl App {
             )),
         ];
 
-        let paragraph = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" New Branch ")
-                .border_style(Style::default().fg(ratatui::style::Color::Cyan)),
-        );
-        f.render_widget(paragraph, popup_area);
+        self.draw_input_dialog(f, area, 7, " New Branch ", ratatui::style::Color::Cyan, lines);
     }
 
     fn draw_reset_dialog(&self, f: &mut Frame, area: Rect, reset_state: &(String, String, bool)) {
         let (mode, path, selecting_mode) = reset_state;
-        let popup_w = (area.width * 3 / 5).max(40);
-        let popup_h = 11;
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
 
         let path_display = if path.is_empty() && !selecting_mode {
             "type path (or Enter for whole repo)".to_string()
@@ -1539,19 +1433,21 @@ impl App {
             )),
         ];
 
-        let paragraph = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Reset ")
-                .border_style(Style::default().fg(ratatui::style::Color::Red)),
-        );
-        f.render_widget(paragraph, popup_area);
+        self.draw_input_dialog(f, area, 11, " Reset ", ratatui::style::Color::Red, lines);
     }
 
-    fn draw_rename_dialog(&self, f: &mut Frame, area: Rect, rename_state: &(String, String)) {
-        let (old_name, new_name) = rename_state;
+    /// Draw a centered input dialog with common styling pattern.
+    /// Returns the popup area used.
+    fn draw_input_dialog(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        popup_h: u16,
+        title: &str,
+        border_color: ratatui::style::Color,
+        lines: Vec<Line>,
+    ) -> Rect {
         let popup_w = (area.width * 3 / 5).max(40);
-        let popup_h = 8;
         let popup_x = (area.width.saturating_sub(popup_w)) / 2;
         let popup_y = (area.height.saturating_sub(popup_h)) / 2;
         let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
@@ -1562,6 +1458,20 @@ impl App {
                 .fg(ratatui::style::Color::White),
         );
         f.render_widget(clear, popup_area);
+
+        let paragraph = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(Style::default().fg(border_color)),
+            );
+        f.render_widget(paragraph, popup_area);
+        popup_area
+    }
+
+    fn draw_rename_dialog(&self, f: &mut Frame, area: Rect, rename_state: &(String, String)) {
+        let (old_name, new_name) = rename_state;
 
         let input_display = if new_name.is_empty() {
             "type new branch name...".to_string()
@@ -1596,13 +1506,7 @@ impl App {
             )),
         ];
 
-        let paragraph = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Rename Branch ")
-                .border_style(Style::default().fg(ratatui::style::Color::Cyan)),
-        );
-        f.render_widget(paragraph, popup_area);
+        self.draw_input_dialog(f, area, 8, " Rename Branch ", ratatui::style::Color::Cyan, lines);
     }
 
     fn draw_ref_diff_popup(&self, f: &mut Frame, area: Rect, title: &str, content: &str, scroll: &u16) {

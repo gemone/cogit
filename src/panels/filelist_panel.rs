@@ -9,6 +9,7 @@ use ratatui::{
 use std::any::Any;
 
 use super::{Action, Panel};
+use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
 
@@ -96,30 +97,12 @@ impl Panel for FileListPanel {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // Handle navigation with the shared helper
+        if handle_list_navigation(&mut self.state, self.files.len(), key.code) {
+            return None;
+        }
+
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                let len = self.files.len();
-                if len > 0 {
-                    let i = self.state.selected().unwrap_or(0);
-                    self.state.select(Some((i + 1).min(len - 1)));
-                }
-                None
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                let i = self.state.selected().unwrap_or(0);
-                self.state.select(Some(i.saturating_sub(1)));
-                None
-            }
-            KeyCode::Char('G') => {
-                if !self.files.is_empty() {
-                    self.state.select(Some(self.files.len() - 1));
-                }
-                None
-            }
-            KeyCode::Char('g') => {
-                self.state.select(Some(0));
-                None
-            }
             KeyCode::Enter => {
                 let i = self.state.selected().unwrap_or(0);
                 if let Some(file) = self.files.get(i) {

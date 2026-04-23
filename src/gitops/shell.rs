@@ -418,9 +418,7 @@ impl Repository {
         };
         // Append pattern if not already present (check exact line match after trimming)
         let pattern_trimmed = pattern.trim();
-        let is_duplicate = content
-            .lines()
-            .any(|line| line.trim() == pattern_trimmed);
+        let is_duplicate = content.lines().any(|line| line.trim() == pattern_trimmed);
         if !is_duplicate {
             if !content.ends_with('\n') && !content.is_empty() {
                 content.push('\n');

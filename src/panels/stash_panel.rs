@@ -1,14 +1,15 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
+    Frame,
 };
 use std::any::Any;
 
 use super::{Action, Panel};
+use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::{Repository, shelve::ShelveEntry, stash::StashEntry};
 
@@ -271,31 +272,13 @@ impl StashPanel {
     }
 
     fn handle_stash_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // Handle basic navigation with the shared helper
+        if handle_list_navigation(&mut self.stash_state, self.stash_entries.len(), key.code) {
+            return None;
+        }
+
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                let len = self.stash_entries.len();
-                if len > 0 {
-                    let i = self.stash_state.selected().unwrap_or(0);
-                    self.stash_state.select(Some((i + 1).min(len - 1)));
-                }
-                None
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                let i = self.stash_state.selected().unwrap_or(0);
-                self.stash_state.select(Some(i.saturating_sub(1)));
-                None
-            }
-            KeyCode::Char('G') => {
-                if !self.stash_entries.is_empty() {
-                    self.stash_state.select(Some(self.stash_entries.len() - 1));
-                }
-                None
-            }
-            KeyCode::Char('g') => {
-                self.stash_state.select(Some(0));
-                None
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 let len = self.stash_entries.len();
                 if len > 0 {
                     let i = self.stash_state.selected().unwrap_or(0);
@@ -303,52 +286,27 @@ impl StashPanel {
                 }
                 None
             }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 let i = self.stash_state.selected().unwrap_or(0);
                 self.stash_state.select(Some(i.saturating_sub(10)));
                 None
             }
-            KeyCode::Enter => {
-                self.selected_stash_index().map(Action::StashPop)
-            }
-            KeyCode::Char('a') => {
-                self.selected_stash_index().map(Action::StashApply)
-            }
-            KeyCode::Char('d') => {
-                self.selected_stash_index().map(Action::StashDrop)
-            }
+            KeyCode::Enter => self.selected_stash_index().map(Action::StashPop),
+            KeyCode::Char('a') => self.selected_stash_index().map(Action::StashApply),
+            KeyCode::Char('d') => self.selected_stash_index().map(Action::StashDrop),
             KeyCode::Char('s') => Some(Action::Stash),
             _ => None,
         }
     }
 
     fn handle_shelve_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // Handle basic navigation with the shared helper
+        if handle_list_navigation(&mut self.shelve_state, self.shelve_entries.len(), key.code) {
+            return None;
+        }
+
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                let len = self.shelve_entries.len();
-                if len > 0 {
-                    let i = self.shelve_state.selected().unwrap_or(0);
-                    self.shelve_state.select(Some((i + 1).min(len - 1)));
-                }
-                None
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                let i = self.shelve_state.selected().unwrap_or(0);
-                self.shelve_state.select(Some(i.saturating_sub(1)));
-                None
-            }
-            KeyCode::Char('G') => {
-                if !self.shelve_entries.is_empty() {
-                    self.shelve_state
-                        .select(Some(self.shelve_entries.len() - 1));
-                }
-                None
-            }
-            KeyCode::Char('g') => {
-                self.shelve_state.select(Some(0));
-                None
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 let len = self.shelve_entries.len();
                 if len > 0 {
                     let i = self.shelve_state.selected().unwrap_or(0);
@@ -356,17 +314,13 @@ impl StashPanel {
                 }
                 None
             }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 let i = self.shelve_state.selected().unwrap_or(0);
                 self.shelve_state.select(Some(i.saturating_sub(10)));
                 None
             }
-            KeyCode::Enter => {
-                self.selected_shelve_name().map(Action::ShelveApply)
-            }
-            KeyCode::Char('d') => {
-                self.selected_shelve_name().map(Action::ShelveDrop)
-            }
+            KeyCode::Enter => self.selected_shelve_name().map(Action::ShelveApply),
+            KeyCode::Char('d') => self.selected_shelve_name().map(Action::ShelveDrop),
             _ => None,
         }
     }

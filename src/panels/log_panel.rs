@@ -1,17 +1,18 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Frame,
 };
 use std::any::Any;
 
 use super::{Action, Panel};
+use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
-use crate::gitops::Repository;
 use crate::gitops::types::CommitDetail;
+use crate::gitops::Repository;
 
 pub struct LogPanel {
     repo: std::path::PathBuf,
@@ -169,56 +170,15 @@ impl Panel for LogPanel {
             }
         }
 
+        // Handle navigation with the shared helper
+        if handle_list_navigation(&mut self.state, self.commits.len(), key.code) {
+            self.load_detail();
+            return None;
+        }
+
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                let len = self.commits.len();
-                if len > 0 {
-                    let i = self.state.selected().unwrap_or(0);
-                    let new_i = (i + 1).min(len - 1);
-                    self.state.select(Some(new_i));
-                    self.load_detail();
-                }
-                None
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                let i = self.state.selected().unwrap_or(0);
-                self.state.select(Some(i.saturating_sub(1)));
-                self.load_detail();
-                None
-            }
-            KeyCode::Char('G') => {
-                if !self.commits.is_empty() {
-                    self.state.select(Some(self.commits.len() - 1));
-                    self.load_detail();
-                }
-                None
-            }
-            KeyCode::Char('g') => {
-                self.state.select(Some(0));
-                self.load_detail();
-                None
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let i = self.state.selected().unwrap_or(0);
-                self.state.select(Some(i.saturating_sub(10)));
-                self.load_detail();
-                None
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let len = self.commits.len();
-                if len > 0 {
-                    let i = self.state.selected().unwrap_or(0);
-                    self.state.select(Some((i + 10).min(len - 1)));
-                    self.load_detail();
-                }
-                None
-            }
-            KeyCode::Char('y') => {
-                self.selected_hash().map(Action::CopyHash)
-            }
-            KeyCode::Char('c') => {
-                self.selected_hash().map(Action::CherryPick)
-            }
+            KeyCode::Char('y') => self.selected_hash().map(Action::CopyHash),
+            KeyCode::Char('c') => self.selected_hash().map(Action::CherryPick),
             KeyCode::Char('/') => {
                 self.search_mode = true;
                 None
