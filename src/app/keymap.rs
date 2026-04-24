@@ -83,6 +83,7 @@ impl KeymapManager {
         self.preset().as_str()
     }
 
+    /// Resolve a key press to an action. Skips hint-only bindings (action: None).
     pub fn resolve(&self, context: KeyContext, key: KeyEvent) -> Option<Action> {
         let pressed = key_label(key);
         let state = self.state.read().expect("keymap lock poisoned");
@@ -91,7 +92,9 @@ impl KeymapManager {
             .chain(bindings_for(state.preset, KeyContext::Global, &state.overrides).into_iter())
         {
             if spec.key.eq_ignore_ascii_case(&pressed) {
-                return spec.action.clone();
+                if let Some(action) = spec.action.clone() {
+                    return Some(action);
+                }
             }
         }
         None
@@ -187,7 +190,7 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("view_log", "2", "Open log panel", Some(Action::ShowLogPanel)),
             binding("view_stash", "4", "Open stash/shelve panel", Some(Action::ShowStashPanel)),
             binding("view_remote", "R", "Open remotes panel", Some(Action::ShowRemotePanel)),
-            binding("view_shelve", "S", "Open shelves panel", Some(Action::ShowShelvePanel)),
+            binding("view_shelve", "W", "Open shelves panel", Some(Action::ShowShelvePanel)),
         ],
         KeyContext::Main => vec![
             binding("stage", "s", "Stage selected file", Some(Action::Stage)),
@@ -201,16 +204,16 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("reset_dialog", "Ctrl+u", "Open reset dialog", Some(Action::ResetDialog("mixed".to_string()))),
         ],
         KeyContext::Branches => vec![
-            binding("checkout", "Enter", "Checkout selected branch", Some(Action::CheckoutBranch(String::new()))),
+            binding("checkout", "Enter", "Checkout selected branch", None),
             binding("create_branch", "n", "Create branch", Some(Action::CreateBranchDialog)),
-            binding("rename_branch", "R", "Rename branch", Some(Action::RenameBranchDialog(String::new()))),
-            binding("delete_branch", "d", "Delete branch", Some(Action::DeleteBranch(String::new()))),
+            binding("rename_branch", "R", "Rename branch", None),
+            binding("delete_branch", "d", "Delete branch", None),
             binding("fetch", "f", "Fetch all remotes", Some(Action::FetchAll)),
             binding("push", "p", "Push current branch", Some(Action::PushCurrent)),
             binding("pull", "P", "Pull current branch", Some(Action::PullCurrent)),
-            binding("merge", "m", "Merge branch", Some(Action::MergeBranch(String::new()))),
-            binding("rebase", "r", "Rebase branch", Some(Action::RebaseBranch(String::new()))),
-            binding("remote_checkout", "o", "Checkout remote branch", Some(Action::CheckoutRemoteBranch(String::new()))),
+            binding("merge", "m", "Merge branch", None),
+            binding("rebase", "r", "Rebase branch", None),
+            binding("remote_checkout", "o", "Checkout remote branch", None),
             binding("rebase_continue", "c", "Continue rebase", Some(Action::RebaseContinue)),
             binding("rebase_abort", "a", "Abort rebase", Some(Action::RebaseAbort)),
             binding("rebase_skip", "s", "Skip rebase step", Some(Action::RebaseSkip)),
@@ -218,33 +221,33 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
         KeyContext::Log => vec![
-            binding("copy_hash", "y", "Copy commit hash", Some(Action::CopyHash(String::new()))),
-            binding("cherry_pick", "c", "Cherry-pick commit", Some(Action::CherryPick(String::new()))),
+            binding("copy_hash", "y", "Copy commit hash", None),
+            binding("cherry_pick", "c", "Cherry-pick commit", None),
             binding("search", "/", "Search commits", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
         KeyContext::Stash => vec![
             binding("toggle_tab", "Tab", "Switch stash/shelve tab", None),
-            binding("pop", "Enter", "Pop selected stash entry", Some(Action::StashPop(0))),
-            binding("apply", "a", "Apply selected stash entry", Some(Action::StashApply(0))),
-            binding("drop", "d", "Drop selected stash entry", Some(Action::StashDrop(0))),
+            binding("pop", "Enter", "Pop selected stash entry", None),
+            binding("apply", "a", "Apply selected stash entry", None),
+            binding("drop", "d", "Drop selected stash entry", None),
             binding("stash", "s", "Create stash", Some(Action::Stash)),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
         KeyContext::Remote => vec![
-            binding("add", "a", "Add remote", Some(Action::AddRemote(String::new(), String::new()))),
-            binding("delete", "d", "Delete remote", Some(Action::RemoveRemote(String::new()))),
-            binding("rename", "r", "Rename remote", Some(Action::RenameRemote(String::new(), String::new()))),
-            binding("fetch", "u", "Fetch remote", Some(Action::FetchRemote(String::new()))),
-            binding("show_branches", "Enter", "Show remote branches", Some(Action::ShowRemoteBranches(String::new()))),
+            binding("add", "a", "Add remote", None),
+            binding("delete", "d", "Delete remote", None),
+            binding("rename", "r", "Rename remote", None),
+            binding("fetch", "u", "Fetch remote", None),
+            binding("show_branches", "Enter", "Show remote branches", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
         KeyContext::Shelve => vec![
-            binding("new", "n", "Create shelve", Some(Action::ShelveCreate(String::new(), false))),
+            binding("new", "n", "Create shelve", None),
             binding("toggle_staged", "s", "Toggle include staged", None),
-            binding("pop", "p", "Pop selected shelve", Some(Action::ShelveApply(0, true))),
-            binding("apply", "a", "Apply selected shelve", Some(Action::ShelveApply(0, false))),
-            binding("drop", "d", "Drop selected shelve", Some(Action::ShelveDrop(0))),
+            binding("pop", "p", "Pop selected shelve", None),
+            binding("apply", "a", "Apply selected shelve", None),
+            binding("drop", "d", "Drop selected shelve", None),
             binding("diff", "Enter", "View shelve diff", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
@@ -259,7 +262,7 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
 fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
     match context {
         KeyContext::Global => vec![
-            binding("open_command", "Space", "Open command palette", Some(Action::OpenCommandPalette)),
+            binding("open_command", ":", "Open command palette", Some(Action::OpenCommandPalette)),
             binding("help", "?", "Show which-key/help", Some(Action::Help)),
             binding("quit", "q", "Quit", Some(Action::Quit)),
             binding("next_view", "Tab", "Next view", Some(Action::NextView)),
@@ -275,7 +278,6 @@ fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("stage_all", "S", "Stage all files", Some(Action::StageAll)),
             binding("unstage", "u", "Unstage selected file", Some(Action::Unstage)),
             binding("unstage_all", "U", "Unstage all files", Some(Action::UnstageAll)),
-            binding("toggle_stage", "Space", "Toggle stage/unstage", Some(Action::ToggleStage)),
             binding("discard", "d", "Discard selected file", Some(Action::Discard)),
             binding("commit", "c", "Open commit dialog", Some(Action::CommitDialog)),
             binding("open_diff", "Enter", "Open diff popup", None),
@@ -284,7 +286,6 @@ fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
         _ => vim_bindings(context),
     }
 }
-
 
 fn nav_bindings() -> Vec<BindingSpec> {
     vec![
@@ -344,10 +345,10 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
-    fn helix_global_has_space_for_command_palette() {
+    fn helix_global_uses_colon_for_command_palette() {
         let cfg = CogitConfig { keymap: crate::config::KeymapConfig { preset: KeymapPreset::Helix, overrides: KeymapOverrides::default() } };
         let km = KeymapManager::new(&cfg);
-        let action = km.resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        let action = km.resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
         assert!(matches!(action, Some(Action::OpenCommandPalette)));
     }
 
@@ -360,10 +361,27 @@ mod tests {
     }
 
     #[test]
-    fn main_space_toggles_stage() {
+    fn vim_main_space_toggles_stage() {
         let cfg = CogitConfig::default();
         let km = KeymapManager::new(&cfg);
         let action = km.resolve(KeyContext::Main, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
         assert!(matches!(action, Some(Action::ToggleStage)));
+    }
+
+    #[test]
+    fn hint_only_bindings_are_skipped() {
+        let cfg = CogitConfig::default();
+        let km = KeymapManager::new(&cfg);
+        // open_diff is hint-only (None) in Main — Enter should not resolve to anything
+        let action = km.resolve(KeyContext::Main, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn vim_global_shelve_on_w() {
+        let cfg = CogitConfig::default();
+        let km = KeymapManager::new(&cfg);
+        let action = km.resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT));
+        assert!(matches!(action, Some(Action::ShowShelvePanel)));
     }
 }

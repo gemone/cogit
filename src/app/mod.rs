@@ -444,47 +444,37 @@ impl App {
         match self.view {
             View::Main => self.handle_main_key(key),
             View::Branches => {
-                if let Some(action) = self.keymap.resolve(KeyContext::Branches, key) {
+                if let Some(action) = self.branch_panel.handle_key(key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.branch_panel.handle_key(key) {
-                    self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Global, key) {
+                } else if let Some(action) = self.keymap.resolve(KeyContext::Branches, key) {
                     self.dispatch(action);
                 }
             }
             View::Log => {
-                if let Some(action) = self.keymap.resolve(KeyContext::Log, key) {
+                if let Some(action) = self.log_panel.handle_key(key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.log_panel.handle_key(key) {
-                    self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Global, key) {
+                } else if let Some(action) = self.keymap.resolve(KeyContext::Log, key) {
                     self.dispatch(action);
                 }
             }
             View::Stash => {
-                if let Some(action) = self.keymap.resolve(KeyContext::Stash, key) {
+                if let Some(action) = self.stash_panel.handle_key(key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.stash_panel.handle_key(key) {
-                    self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Global, key) {
+                } else if let Some(action) = self.keymap.resolve(KeyContext::Stash, key) {
                     self.dispatch(action);
                 }
             }
             View::Remote => {
-                if let Some(action) = self.keymap.resolve(KeyContext::Remote, key) {
+                if let Some(action) = self.remote_panel.handle_key(key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.remote_panel.handle_key(key) {
-                    self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Global, key) {
+                } else if let Some(action) = self.keymap.resolve(KeyContext::Remote, key) {
                     self.dispatch(action);
                 }
             }
             View::Shelve => {
-                if let Some(action) = self.keymap.resolve(KeyContext::Shelve, key) {
+                if let Some(action) = self.shelve_panel.handle_key(key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.shelve_panel.handle_key(key) {
-                    self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Global, key) {
+                } else if let Some(action) = self.keymap.resolve(KeyContext::Shelve, key) {
                     self.dispatch(action);
                 }
             }
@@ -1638,10 +1628,13 @@ impl App {
         // File list
         self.filelist.focus();
         self.filelist.render(f, chunks[1]);
-        let help = Paragraph::new(format!(
-            " 1:branches 2:log 4:stash R:remote s:shelve A:stage-all c:commit q:quit ?:help :commands  [keymap:{}]",
-            self.keymap.preset_name()
-        ))
+        // Build footer hints dynamically from keymap
+        let mut footer_parts: Vec<String> = Vec::new();
+        for hint in self.keymap.bindings_for(KeyContext::Global) {
+            footer_parts.push(format!("{}:{}", hint.key, hint.description));
+        }
+        footer_parts.push(format!("[keymap:{}]", self.keymap.preset_name()));
+        let help = Paragraph::new(format!(" {}", footer_parts.join("  ")))
         .style(self.styles.text_secondary);
         f.render_widget(help, chunks[2]);
     }

@@ -17,7 +17,8 @@ cargo run -- <repo-path>
 
 cogit reads `config.toml` from the standard config directory:
 
-- macOS / Linux: `~/.config/cogit/config.toml` or `$XDG_CONFIG_HOME/cogit/config.toml`
+- macOS: `~/Library/Application Support/cogit/config.toml`
+- Linux: `~/.config/cogit/config.toml` or `$XDG_CONFIG_HOME/cogit/config.toml`
 - the file is created on demand when switching keymap presets
 
 Example:
