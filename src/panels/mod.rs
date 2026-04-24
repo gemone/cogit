@@ -13,6 +13,9 @@ use std::any::Any;
 pub enum Action {
     Quit,
     BackToMain,
+    OpenCommandPalette,
+    NextView,
+    PrevView,
     ShowBranchPanel,
     ShowLogPanel,
     ShowStashPanel,
@@ -21,6 +24,7 @@ pub enum Action {
     StageAll,
     Unstage,
     UnstageAll,
+    ToggleStage,
     Discard,
     CommitDialog,
     Commit(String),
@@ -88,6 +92,7 @@ pub enum Action {
     ShowGitignore,
     GitignoreAdd(String),
     GitignoreRemove(String),
+    SetKeymapPreset(String),
 }
 
 pub trait Panel {
