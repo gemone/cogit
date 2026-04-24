@@ -13,6 +13,7 @@ pub enum KeyContext {
     Main,
     Branches,
     Log,
+    Rebase,
     Stash,
     Remote,
     Shelve,
@@ -39,6 +40,7 @@ impl KeyContext {
             Self::Stash => Some("stash"),
             Self::Remote => Some("remote"),
             Self::Shelve => Some("shelve"),
+            Self::Rebase => Some("rebase"),
         }
     }
 }
@@ -232,6 +234,13 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("rebase_abort", "a", "Abort rebase", Some(Action::RebaseAbort)),
             binding("rebase_skip", "s", "Skip rebase step", Some(Action::RebaseSkip)),
             binding("search", "/", "Search branches", None),
+            binding("back", "q", "Back to main view", Some(Action::BackToMain)),
+        ],
+        KeyContext::Rebase => vec![
+            binding("cycle_action", "s", "Cycle action type", None),
+            binding("move_up", "K", "Move commit up", None),
+            binding("move_down", "J", "Move commit down", None),
+            binding("execute", "Enter", "Execute rebase", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
         KeyContext::Log => vec![

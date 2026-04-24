@@ -141,6 +141,7 @@ fn section_title(view: &View) -> &'static str {
         View::Stash => "Stash",
         View::Remote => "Remote",
         View::Shelve => "Shelve",
+        View::Rebase => "Rebase",
     }
 }
 
@@ -149,6 +150,7 @@ fn section_context(view: &View) -> KeyContext {
         View::Main => KeyContext::Main,
         View::Branches => KeyContext::Branches,
         View::Log => KeyContext::Log,
+        View::Rebase => KeyContext::Rebase,
         View::Stash => KeyContext::Stash,
         View::Remote => KeyContext::Remote,
         View::Shelve => KeyContext::Shelve,

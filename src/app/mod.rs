@@ -20,7 +20,7 @@ use crate::gitops::Repository;
 use crate::gitops::shell::{MergePreview, MergeStrategy};
 use crate::panels::{
     Action, Panel, branch_panel::BranchPanel, filelist_panel::FileListPanel, log_panel::LogPanel,
-    remote_panel, shelve_panel::ShelvePanel, stash_panel::StashPanel,
+    rebase_panel, remote_panel, shelve_panel::ShelvePanel, stash_panel::StashPanel,
 };
 use crate::config::{ConfigFile, KeymapPreset};
 use crate::app::keymap::{KeyContext, KeymapManager};
@@ -39,6 +39,7 @@ pub enum View {
     Stash,
     Remote,
     Shelve,
+    Rebase,
 }
 
 pub struct App {
@@ -57,6 +58,7 @@ pub struct App {
     stash_panel: StashPanel,
     remote_panel: remote_panel::RemotePanel,
     shelve_panel: ShelvePanel,
+    rebase_panel: rebase_panel::RebasePanel,
     // UI components
     cmdline: CmdLine,
     notifications: NotificationManager,
@@ -84,6 +86,7 @@ impl App {
         let stash_panel = StashPanel::new(repo_path, &styles);
         let remote_panel = remote_panel::RemotePanel::new(repo_path, &styles);
         let shelve_panel = ShelvePanel::new(repo_path, &styles);
+        let rebase_panel = rebase_panel::RebasePanel::new();
         let cmdline = CmdLine::new(&styles);
         let notifications = NotificationManager::new();
         let help_overlay = HelpOverlay::new(&styles);
@@ -103,6 +106,7 @@ impl App {
             stash_panel,
             remote_panel,
             shelve_panel,
+            rebase_panel,
             cmdline,
             notifications,
             diff_popup: None,
@@ -478,6 +482,13 @@ impl App {
                     self.dispatch(action);
                 }
             }
+            View::Rebase => {
+                if let Some(action) = self.keymap.resolve(KeyContext::Rebase, key) {
+                    self.dispatch(action);
+                } else if let Some(action) = self.rebase_panel.handle_key(key) {
+                    self.dispatch(action);
+                }
+            }
         }
     }
 
@@ -682,6 +693,15 @@ impl App {
             ":tag" | ":tags" => Action::ShowTags,
             ":worktrees" => Action::ShowWorktrees,
             ":pull-rebase" | ":rebase-pull" => Action::PullRebase,
+            cmd if cmd.starts_with(":rebase ") => {
+                let onto = cmd.strip_prefix(":rebase ").unwrap().trim();
+                if !onto.is_empty() {
+                    self.dispatch(Action::StartRebase(onto.to_string()));
+                } else {
+                    self.notifications.notify_error("Usage: :rebase <onto-ref>");
+                }
+                return;
+            }
             "" => return,
             _ => {
                 self.notifications.notify_error(&format!("Unknown command: {}", cmd));
@@ -717,6 +737,9 @@ impl App {
             }
             View::Remote => {
                 self.remote_panel.focus();
+            }
+            View::Rebase => {
+                self.rebase_panel.focus();
             }
             View::Shelve => {
                 self.shelve_panel.focus();
@@ -1393,6 +1416,22 @@ impl App {
                     }
                 }
             }
+            Action::StartRebase(upstream) => {
+                self.rebase_panel.load_todos(&self.repo, &upstream);
+                self.switch_view(View::Rebase);
+            }
+            Action::ExecuteRebase(upstream, todos) => {
+                match self.repo.rebase_interactive(&upstream, &todos) {
+                    Ok(msg) => {
+                        self.notifications.notify(&format!("Rebase: {}", msg));
+                        self.switch_view(View::Main);
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Rebase failed: {}", e));
+                    }
+                }
+            }
             Action::ShowRemoteBranches(name) => {
                 // Show branches for this remote as a notification
                 match self.repo.branches() {
@@ -1499,7 +1538,8 @@ impl App {
             View::Log => View::Stash,
             View::Stash => View::Remote,
             View::Remote => View::Shelve,
-            View::Shelve => View::Main,
+            View::Shelve => View::Rebase,
+            View::Rebase => View::Main,
         }
     }
 
@@ -1510,6 +1550,7 @@ impl App {
             View::Log => View::Branches,
             View::Stash => View::Log,
             View::Remote => View::Stash,
+            View::Rebase => View::Shelve,
             View::Shelve => View::Remote,
         }
     }
@@ -1546,6 +1587,7 @@ impl App {
             View::Log => self.log_panel.render(f, view_area),
             View::Stash => self.stash_panel.render(f, view_area),
             View::Remote => self.remote_panel.render(f, view_area),
+            View::Rebase => self.rebase_panel.render(f, view_area),
             View::Shelve => self.shelve_panel.render(f, view_area),
         }
 

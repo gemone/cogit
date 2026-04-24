@@ -477,6 +477,24 @@ impl Repository {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
+    pub(crate) fn git_cmd_with_env(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<String> {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(args).current_dir(&self.path);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let output = cmd.output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git {} failed: {}", args.join(" "), stderr);
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
     pub fn preview_merge(&self, branch: &str) -> Result<MergePreview> {
         // Check if fast-forward is possible
         let can_ff = self
@@ -614,6 +632,53 @@ impl Repository {
 
     pub fn rebase_skip(&self) -> Result<String> {
         let output = self.git_cmd(&["rebase", "--skip"])?;
+        Ok(output)
+    }
+
+    /// Get commits for interactive rebase: all commits between HEAD and `onto`.
+    pub fn rebase_get_todo(&self, onto: &str) -> Result<Vec<RebaseTodo>> {
+        let output = self.git_cmd(&[
+            "log",
+            &format!("{}..HEAD", onto),
+            "--reverse",
+            "--pretty=format:%H|%h|%s",
+        ])?;
+        let mut todos = Vec::new();
+        for line in output.lines() {
+            let parts: Vec<&str> = line.splitn(3, '|').collect();
+            if parts.len() == 3 {
+                todos.push(RebaseTodo {
+                    action: RebaseAction::Pick,
+                    hash: parts[0].to_string(),
+                    short_hash: parts[1].to_string(),
+                    subject: parts[2].to_string(),
+                });
+            }
+        }
+        Ok(todos)
+    }
+
+    /// Execute an interactive rebase with the given todo list.
+    /// Uses GIT_SEQUENCE_EDITOR to apply the todo without opening an editor.
+    pub fn rebase_interactive(&self, onto: &str, todos: &[RebaseTodo]) -> Result<String> {
+        // Build the todo file content
+        let todo_content: String = todos
+            .iter()
+            .map(|t| format!("{} {} {}\n", t.action.as_str(), t.hash, t.subject))
+            .collect();
+
+        // Write todo to a temp file and use it as GIT_SEQUENCE_EDITOR
+        let dir = std::env::temp_dir().join("cogit-rebase-todo");
+        std::fs::create_dir_all(&dir)?;
+        let todo_path = dir.join("git-rebase-todo");
+        std::fs::write(&todo_path, &todo_content)?;
+
+        let editor_script = format!("cp {} \"$1\"", todo_path.display());
+
+        let output = self.git_cmd_with_env(
+            &["rebase", "-i", onto],
+            &[("GIT_SEQUENCE_EDITOR", editor_script.as_str())],
+        )?;
         Ok(output)
     }
 
