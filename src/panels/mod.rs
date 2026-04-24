@@ -92,7 +92,7 @@ pub enum Action {
     ShowGitignore,
     GitignoreAdd(String),
     GitignoreRemove(String),
-    SetKeymapPreset(String),
+    SetKeymapPreset(crate::config::KeymapPreset),
 }
 
 pub trait Panel {

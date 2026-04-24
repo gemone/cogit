@@ -444,37 +444,37 @@ impl App {
         match self.view {
             View::Main => self.handle_main_key(key),
             View::Branches => {
-                if let Some(action) = self.branch_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Branches, key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Branches, key) {
+                } else if let Some(action) = self.branch_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
             View::Log => {
-                if let Some(action) = self.log_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Log, key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Log, key) {
+                } else if let Some(action) = self.log_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
             View::Stash => {
-                if let Some(action) = self.stash_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Stash, key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Stash, key) {
+                } else if let Some(action) = self.stash_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
             View::Remote => {
-                if let Some(action) = self.remote_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Remote, key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Remote, key) {
+                } else if let Some(action) = self.remote_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
             View::Shelve => {
-                if let Some(action) = self.shelve_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Shelve, key) {
                     self.dispatch(action);
-                } else if let Some(action) = self.keymap.resolve(KeyContext::Shelve, key) {
+                } else if let Some(action) = self.shelve_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
@@ -645,10 +645,10 @@ impl App {
         // Parse keymap <vim|helix>
         if let Some(preset) = cmd.strip_prefix(":keymap ") {
             let preset = preset.trim().to_lowercase();
-            if preset == "vim" || preset == "helix" {
-                self.dispatch(Action::SetKeymapPreset(preset));
-            } else {
-                self.notifications.notify_error("Usage: :keymap vim|helix");
+            match preset.as_str() {
+                "vim" => self.dispatch(Action::SetKeymapPreset(KeymapPreset::Vim)),
+                "helix" => self.dispatch(Action::SetKeymapPreset(KeymapPreset::Helix)),
+                _ => self.notifications.notify_error("Usage: :keymap vim|helix"),
             }
             return;
         }
@@ -1319,20 +1319,12 @@ impl App {
                 }
             }
             Action::SetKeymapPreset(preset) => {
-                let preset_enum = match preset.as_str() {
-                    "vim" => KeymapPreset::Vim,
-                    "helix" => KeymapPreset::Helix,
-                    _ => {
-                        self.notifications.notify_error(&format!("Unknown keymap preset: {}", preset));
-                        return;
-                    }
-                };
-                self.keymap.set_preset(preset_enum);
-                self.config_file.config.keymap.preset = preset_enum;
+                self.keymap.set_preset(preset);
+                self.config_file.config.keymap.preset = preset;
                 if let Err(e) = self.config_file.save() {
                     self.notifications.notify_error(&format!("Failed to save keymap preset: {}", e));
                 } else {
-                    self.notifications.notify(&format!("Keymap preset switched to {}", preset_enum.as_str()));
+                    self.notifications.notify(&format!("Keymap preset switched to {}", preset.as_str()));
                 }
             }
             Action::AddRemote(name, url) => {

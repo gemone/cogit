@@ -96,7 +96,7 @@ impl KeymapManager {
         };
 
         for spec in context_specs.into_iter().chain(global_specs) {
-            if spec.key.eq_ignore_ascii_case(&pressed) {
+            if spec.key == pressed {
                 if let Some(action) = spec.action {
                     return Some(action);
                 }
@@ -235,9 +235,9 @@ fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
         ],
         KeyContext::Main => vec![
             binding("stage", "s", "Stage selected file", Some(Action::Stage)),
-            binding("stage_all", "S", "Stage all files", Some(Action::StageAll)),
+            binding("stage_all", "A", "Stage all files", Some(Action::StageAll)),
             binding("unstage", "u", "Unstage selected file", Some(Action::Unstage)),
-            binding("unstage_all", "U", "Unstage all files", Some(Action::UnstageAll)),
+            binding("unstage_all", "V", "Unstage all files", Some(Action::UnstageAll)),
             binding("discard", "d", "Discard selected file", Some(Action::Discard)),
             binding("commit", "c", "Open commit dialog", Some(Action::CommitDialog)),
             binding("open_diff", "Enter", "Open diff popup", None),
@@ -319,6 +319,30 @@ mod tests {
         assert!(matches!(
             vim_km().resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT)),
             Some(Action::ShowShelvePanel)
+        ));
+    }
+
+    #[test]
+    fn vim_main_s_vs_shift_s_case_sensitive() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Main, key(KeyCode::Char('s'))),
+            Some(Action::Stage)
+        ));
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Main, KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT)),
+            Some(Action::StageAll)
+        ));
+    }
+
+    #[test]
+    fn vim_main_u_vs_shift_u_case_sensitive() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Main, key(KeyCode::Char('u'))),
+            Some(Action::Unstage)
+        ));
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Main, KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT)),
+            Some(Action::UnstageAll)
         ));
     }
 }
