@@ -13,6 +13,28 @@ A Rust TUI for Git workflows, inspired by Lazygit and the IDEA Git tool window.
 cargo run -- <repo-path>
 ```
 
+## Config
+
+cogit reads `config.toml` from the standard config directory:
+
+- macOS: `~/Library/Application Support/cogit/config.toml`
+- Linux: `~/.config/cogit/config.toml` or `$XDG_CONFIG_HOME/cogit/config.toml`
+- the file is created on demand when switching keymap presets
+
+Example:
+
+```toml
+[keymap]
+preset = "vim" # or "helix"
+```
+
+In-app commands:
+
+- `:keymap vim`
+- `:keymap helix`
+- `:keymap` to show the current preset
+- `?` to open contextual which-key/help
+
 ## Notes
 
 - Planning documents are kept outside the repository under `.hermes/` and are not tracked in git.

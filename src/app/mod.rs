@@ -1,5 +1,6 @@
 pub mod cmdline;
 pub mod help;
+pub mod keymap;
 pub mod navigation;
 pub mod notification;
 pub mod styles;
@@ -21,6 +22,8 @@ use crate::panels::{
     Action, Panel, branch_panel::BranchPanel, filelist_panel::FileListPanel, log_panel::LogPanel,
     remote_panel, shelve_panel::ShelvePanel, stash_panel::StashPanel,
 };
+use crate::config::{ConfigFile, KeymapPreset};
+use crate::app::keymap::{KeyContext, KeymapManager};
 use crate::vimkeys::Mode;
 
 use self::cmdline::CmdLine;
@@ -41,6 +44,8 @@ pub enum View {
 pub struct App {
     repo_path: std::path::PathBuf,
     repo: Repository,
+    config_file: ConfigFile,
+    keymap: KeymapManager,
     view: View,
     mode: Mode,
     styles: Styles,
@@ -70,6 +75,8 @@ pub struct App {
 impl App {
     pub fn new(repo_path: &Path) -> Result<Self> {
         let repo = Repository::open(repo_path)?;
+        let config_file = ConfigFile::load()?;
+        let keymap = KeymapManager::new(&config_file.config);
         let styles = Styles::default();
         let filelist = FileListPanel::new(repo_path, &styles);
         let branch_panel = BranchPanel::new(repo_path, &styles);
@@ -84,6 +91,8 @@ impl App {
         Ok(Self {
             repo_path: repo_path.to_path_buf(),
             repo,
+            config_file,
+            keymap,
             view: View::Main,
             mode: Mode::Normal,
             styles,
@@ -115,10 +124,11 @@ impl App {
     ) -> Result<()> {
         while !self.should_quit {
             terminal.draw(|f| self.draw_frame(f))?;
-            if event::poll(std::time::Duration::from_millis(100))?
-                && let Event::Key(key) = event::read()? {
+            if event::poll(std::time::Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
                     self.handle_event(key);
                 }
+            }
             self.notifications.cleanup();
         }
         Ok(())
@@ -142,25 +152,31 @@ impl App {
         }
 
         // Ref diff popup takes priority
-        if self.ref_diff_popup.is_some()
-            && let Some((_, _, scroll)) = self.ref_diff_popup.as_mut()
-                && Self::handle_popup_scroll(Some(scroll), key.code) {
+        if self.ref_diff_popup.is_some() {
+            if let Some((_, _, scroll)) = self.ref_diff_popup.as_mut() {
+                if Self::handle_popup_scroll(Some(scroll), key.code) {
                     return;
                 }
+            }
+        }
 
         // Diff popup takes priority
-        if self.diff_popup.is_some()
-            && let Some((_, _, scroll)) = self.diff_popup.as_mut()
-                && Self::handle_popup_scroll(Some(scroll), key.code) {
+        if self.diff_popup.is_some() {
+            if let Some((_, _, scroll)) = self.diff_popup.as_mut() {
+                if Self::handle_popup_scroll(Some(scroll), key.code) {
                     return;
                 }
+            }
+        }
 
         // Gitignore popup takes priority
-        if self.gitignore_popup.is_some()
-            && let Some((_, scroll)) = self.gitignore_popup.as_mut()
-                && Self::handle_popup_scroll(Some(scroll), key.code) {
+        if self.gitignore_popup.is_some() {
+            if let Some((_, scroll)) = self.gitignore_popup.as_mut() {
+                if Self::handle_popup_scroll(Some(scroll), key.code) {
                     return;
                 }
+            }
+        }
 
         // Ignore all other keys while a popup is active so they do not
         // fall through to the normal app dispatch.
@@ -421,11 +437,6 @@ impl App {
             return;
         }
 
-        if key.code == KeyCode::Char('?') {
-            self.dispatch(Action::Help);
-            return;
-        }
-
         if self.mode == Mode::Command {
             self.mode = Mode::Normal;
         }
@@ -433,27 +444,37 @@ impl App {
         match self.view {
             View::Main => self.handle_main_key(key),
             View::Branches => {
-                if let Some(action) = self.branch_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Branches, key) {
+                    self.dispatch(action);
+                } else if let Some(action) = self.branch_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
             View::Log => {
-                if let Some(action) = self.log_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Log, key) {
+                    self.dispatch(action);
+                } else if let Some(action) = self.log_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
             View::Stash => {
-                if let Some(action) = self.stash_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Stash, key) {
+                    self.dispatch(action);
+                } else if let Some(action) = self.stash_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
             View::Remote => {
-                if let Some(action) = self.remote_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Remote, key) {
+                    self.dispatch(action);
+                } else if let Some(action) = self.remote_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
             View::Shelve => {
-                if let Some(action) = self.shelve_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Shelve, key) {
+                    self.dispatch(action);
+                } else if let Some(action) = self.shelve_panel.handle_key(key) {
                     self.dispatch(action);
                 }
             }
@@ -461,51 +482,13 @@ impl App {
     }
 
     fn handle_main_key(&mut self, key: KeyEvent) {
+        if let Some(action) = self.keymap.resolve(KeyContext::Main, key) {
+            self.dispatch(action);
+            return;
+        }
+
         match key.code {
-            KeyCode::Char(':') => {
-                self.mode = Mode::Command;
-                self.cmdline.open();
-            }
-            KeyCode::Char('1') => {
-                self.switch_view(View::Branches);
-            }
-            KeyCode::Char('2') => {
-                self.switch_view(View::Log);
-            }
-            KeyCode::Char('4') => {
-                self.switch_view(View::Stash);
-            }
-            KeyCode::Char('R') => {
-                self.switch_view(View::Remote);
-            }
-            KeyCode::Char('S') => {
-                self.switch_view(View::Shelve);
-            }
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-            }
-            KeyCode::Char('?') => {
-                self.dispatch(Action::Help);
-            }
-            KeyCode::Char('s') => {
-                self.dispatch(Action::Stage);
-            }
-            KeyCode::Char('A') => {
-                self.dispatch(Action::StageAll);
-            }
-            KeyCode::Char('u') => {
-                self.dispatch(Action::Unstage);
-            }
-            KeyCode::Char('U') => {
-                self.dispatch(Action::UnstageAll);
-            }
-            KeyCode::Char('c') => {
-                self.dispatch(Action::CommitDialog);
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.filelist.handle_key(key);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('k') | KeyCode::Up => {
                 self.filelist.handle_key(key);
             }
             _ => {
@@ -539,18 +522,21 @@ impl App {
 
     fn execute_command(&mut self, cmd: &str) {
         let cmd = cmd.trim();
+
         // Parse commit -m "msg"
         if let Some(msg) = cmd.strip_prefix(":commit -m ") {
             let msg = msg.trim_matches('"').trim();
             self.dispatch(Action::Commit(msg.to_string()));
             return;
         }
+
         // Parse checkout X
         if let Some(branch) = cmd.strip_prefix(":checkout ") {
             let branch = branch.trim();
             self.dispatch(Action::CheckoutBranch(branch.to_string()));
             return;
         }
+
         // Parse tag <name> (create tag)
         if let Some(name) = cmd.strip_prefix(":tag ") {
             let name = name.trim();
@@ -559,6 +545,7 @@ impl App {
             }
             return;
         }
+
         // Parse reset [path] [soft|hard|mixed]
         if let Some(args) = cmd.strip_prefix(":reset ") {
             let parts: Vec<&str> = args.split_whitespace().collect();
@@ -573,10 +560,10 @@ impl App {
             self.dispatch(Action::Reset(mode, path));
             return;
         }
+
         // Parse diff <ref1> <ref2>
         if let Some(args) = cmd.strip_prefix(":diff ") {
             let args = args.trim();
-            // Support both "ref1..ref2" and "ref1 ref2" formats
             let range = if args.contains("..") {
                 args.to_string()
             } else {
@@ -591,6 +578,7 @@ impl App {
             self.dispatch(Action::ShowRefDiff(range));
             return;
         }
+
         // Parse rename-branch <old> <new>
         if let Some(args) = cmd.strip_prefix(":rename-branch ") {
             let parts: Vec<&str> = args.split_whitespace().collect();
@@ -601,6 +589,7 @@ impl App {
             }
             return;
         }
+
         // Parse worktree add <path> <branch>
         if let Some(args) = cmd.strip_prefix(":worktree add ") {
             let parts: Vec<&str> = args.split_whitespace().collect();
@@ -613,6 +602,7 @@ impl App {
             }
             return;
         }
+
         // Parse worktree remove <path>
         if let Some(path) = cmd.strip_prefix(":worktree remove ") {
             let path = path.trim();
@@ -623,11 +613,13 @@ impl App {
             }
             return;
         }
+
         // Parse ignore (show .gitignore)
         if cmd == ":ignore" {
             self.dispatch(Action::ShowGitignore);
             return;
         }
+
         // Parse ignore-add <pattern>
         if let Some(pattern) = cmd.strip_prefix(":ignore-add ") {
             let pattern = pattern.trim();
@@ -638,6 +630,7 @@ impl App {
             }
             return;
         }
+
         // Parse ignore-remove <pattern>
         if let Some(pattern) = cmd.strip_prefix(":ignore-remove ") {
             let pattern = pattern.trim();
@@ -648,15 +641,19 @@ impl App {
             }
             return;
         }
-        // Parse ignore <pattern> (add mode)
-        if let Some(pattern) = cmd.strip_prefix(":ignore ") {
-            let pattern = pattern.trim();
-            if !pattern.is_empty() {
-                self.dispatch(Action::GitignoreAdd(pattern.to_string()));
-            } else {
-                // Show gitignore if no pattern
-                self.dispatch(Action::ShowGitignore);
+
+        // Parse keymap <vim|helix>
+        if let Some(preset) = cmd.strip_prefix(":keymap ") {
+            let preset = preset.trim().to_lowercase();
+            match preset.as_str() {
+                "vim" => self.dispatch(Action::SetKeymapPreset(KeymapPreset::Vim)),
+                "helix" => self.dispatch(Action::SetKeymapPreset(KeymapPreset::Helix)),
+                _ => self.notifications.notify_error("Usage: :keymap vim|helix"),
             }
+            return;
+        }
+        if cmd == ":keymap" {
+            self.notifications.notify(&format!("Current keymap: {}", self.keymap.preset_name()));
             return;
         }
 
@@ -687,8 +684,7 @@ impl App {
             ":pull-rebase" | ":rebase-pull" => Action::PullRebase,
             "" => return,
             _ => {
-                self.notifications
-                    .notify_error(&format!("Unknown command: {}", cmd));
+                self.notifications.notify_error(&format!("Unknown command: {}", cmd));
                 return;
             }
         };
@@ -696,6 +692,7 @@ impl App {
     }
 
     fn switch_view(&mut self, view: View) {
+
         // Blur current panels
         self.filelist.blur();
         self.branch_panel.blur();
@@ -732,8 +729,18 @@ impl App {
             Action::Quit => {
                 self.should_quit = true;
             }
+            Action::OpenCommandPalette => {
+                self.mode = Mode::Command;
+                self.cmdline.open();
+            }
             Action::BackToMain => {
                 self.switch_view(View::Main);
+            }
+            Action::NextView => {
+                self.switch_view(Self::next_view(&self.view));
+            }
+            Action::PrevView => {
+                self.switch_view(Self::prev_view(&self.view));
             }
             Action::ShowBranchPanel => {
                 self.switch_view(View::Branches);
@@ -752,6 +759,16 @@ impl App {
             }
             Action::Stage => {
                 self.dispatch_stage();
+            }
+            Action::ToggleStage => {
+                let i = self.filelist.state.selected().unwrap_or(0);
+                if let Some(file) = self.filelist.files.get(i) {
+                    if file.staged {
+                        self.dispatch_unstage();
+                    } else {
+                        self.dispatch_stage();
+                    }
+                }
             }
             Action::StageAll => {
                 if let Err(e) = self.repo.stage_all() {
@@ -1301,6 +1318,15 @@ impl App {
                     }
                 }
             }
+            Action::SetKeymapPreset(preset) => {
+                self.keymap.set_preset(preset);
+                self.config_file.config.keymap.preset = preset;
+                if let Err(e) = self.config_file.save() {
+                    self.notifications.notify_error(&format!("Failed to save keymap preset: {}", e));
+                } else {
+                    self.notifications.notify(&format!("Keymap preset switched to {}", preset.as_str()));
+                }
+            }
             Action::AddRemote(name, url) => {
                 match self.repo.add_remote(&name, &url) {
                     Ok(_) => {
@@ -1443,6 +1469,29 @@ impl App {
         }
     }
 
+
+    fn next_view(view: &View) -> View {
+        match view {
+            View::Main => View::Branches,
+            View::Branches => View::Log,
+            View::Log => View::Stash,
+            View::Stash => View::Remote,
+            View::Remote => View::Shelve,
+            View::Shelve => View::Main,
+        }
+    }
+
+    fn prev_view(view: &View) -> View {
+        match view {
+            View::Main => View::Shelve,
+            View::Branches => View::Main,
+            View::Log => View::Branches,
+            View::Stash => View::Log,
+            View::Remote => View::Stash,
+            View::Shelve => View::Remote,
+        }
+    }
+
     fn refresh_all(&mut self) {
         self.filelist.refresh();
         self.branch_panel.refresh();
@@ -1537,8 +1586,8 @@ impl App {
         // Notifications on top of everything
         self.notifications.render(f, size);
 
-        // Help overlay modal on top of everything
-        self.help_overlay.render(f, size);
+        // Help overlay on top of everything
+        self.help_overlay.render(f, size, &self.keymap, &self.view, &self.mode);
     }
 
     fn draw_main(&mut self, f: &mut Frame, area: Rect) {
@@ -1566,9 +1615,13 @@ impl App {
         // File list
         self.filelist.focus();
         self.filelist.render(f, chunks[1]);
-        let help = Paragraph::new(
-            " 1:branches 2:log 4:stash R:remote s:shelve A:stage-all c:commit q:quit ?:help :commands",
-        )
+        // Build footer hints dynamically from keymap
+        let mut footer_parts: Vec<String> = Vec::new();
+        for hint in self.keymap.bindings_for(KeyContext::Global) {
+            footer_parts.push(format!("{}:{}", hint.key, hint.description));
+        }
+        footer_parts.push(format!("[keymap:{}]", self.keymap.preset_name()));
+        let help = Paragraph::new(format!(" {}", footer_parts.join("  ")))
         .style(self.styles.text_secondary);
         f.render_widget(help, chunks[2]);
     }

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod app;
+mod config;
 mod gitops;
 mod panels;
 mod vimkeys;
