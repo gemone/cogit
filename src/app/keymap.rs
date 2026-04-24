@@ -77,9 +77,12 @@ impl KeymapState {
         self.cache.clear();
         for ctx in KeyContext::ALL {
             let specs = build_bindings(self.preset, ctx, &self.overrides);
-            let lookup = specs.iter()
-                .filter_map(|s| s.action.clone().map(|a| (s.key.clone(), a)))
-                .collect();
+            let mut lookup = HashMap::new();
+            for spec in &specs {
+                if let Some(action) = spec.action.clone() {
+                    lookup.entry(spec.key.clone()).or_insert(action);
+                }
+            }
             self.cache.insert(ctx, ContextCache { specs, lookup });
         }
     }
