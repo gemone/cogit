@@ -487,11 +487,6 @@ impl App {
             return;
         }
 
-        if let Some(action) = self.keymap.resolve(KeyContext::Global, key) {
-            self.dispatch(action);
-            return;
-        }
-
         match key.code {
             KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('k') | KeyCode::Up => {
                 self.filelist.handle_key(key);
@@ -1600,7 +1595,7 @@ impl App {
         self.notifications.render(f, size);
 
         // Help overlay on top of everything
-        self.help_overlay.render(f, size, &self.keymap, self.view.clone(), self.mode.clone());
+        self.help_overlay.render(f, size, &self.keymap, &self.view, &self.mode);
     }
 
     fn draw_main(&mut self, f: &mut Frame, area: Rect) {

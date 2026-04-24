@@ -57,7 +57,7 @@ impl HelpOverlay {
         }
     }
 
-    pub fn render(&self, f: &mut Frame, area: Rect, keymap: &KeymapManager, view: View, mode: Mode) {
+    pub fn render(&self, f: &mut Frame, area: Rect, keymap: &KeymapManager, view: &View, mode: &Mode) {
         if !self.visible {
             return;
         }
@@ -98,7 +98,7 @@ impl HelpOverlay {
         push_section(&mut lines, "Global", keymap.bindings_for(KeyContext::Global));
         push_section(&mut lines, section_title(&view), keymap.bindings_for(section_context(&view)));
 
-        if mode == Mode::Command {
+        if *mode == Mode::Command {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![Span::styled(
                 "Command mode",

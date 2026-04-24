@@ -15,8 +15,6 @@ pub enum KeyContext {
     Stash,
     Remote,
     Shelve,
-    Navigation,
-    Command,
 }
 
 impl KeyContext {
@@ -30,23 +28,10 @@ impl KeyContext {
             Self::Stash => Some("stash"),
             Self::Remote => Some("remote"),
             Self::Shelve => Some("shelve"),
-            Self::Navigation => Some("navigation"),
-            Self::Command => Some("command"),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ListMotion {
-    Up,
-    Down,
-    Top,
-    Bottom,
-    PageUp,
-    PageDown,
-}
-
-#[derive(Debug, Clone)]
 pub struct KeyBindingHint {
     pub key: String,
     pub description: &'static str,
@@ -115,25 +100,6 @@ impl KeymapManager {
                 if let Some(action) = spec.action {
                     return Some(action);
                 }
-            }
-        }
-        None
-    }
-
-    pub fn resolve_motion(&self, key: KeyEvent) -> Option<ListMotion> {
-        let pressed = key_label(key);
-        let state = self.state.read().expect("keymap lock poisoned");
-        for spec in bindings_for(state.preset, KeyContext::Navigation, &state.overrides) {
-            if spec.key.eq_ignore_ascii_case(&pressed) {
-                return match spec.id {
-                    "nav_up" | "nav_up_alt" => Some(ListMotion::Up),
-                    "nav_down" | "nav_down_alt" => Some(ListMotion::Down),
-                    "nav_top" => Some(ListMotion::Top),
-                    "nav_bottom" => Some(ListMotion::Bottom),
-                    "nav_page_up" | "nav_page_up_alt" => Some(ListMotion::PageUp),
-                    "nav_page_down" | "nav_page_down_alt" => Some(ListMotion::PageDown),
-                    _ => None,
-                };
             }
         }
         None
@@ -250,11 +216,6 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("diff", "Enter", "View shelve diff", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
-        KeyContext::Navigation => nav_bindings(),
-        KeyContext::Command => vec![
-            binding("escape", "Esc", "Close command line", None),
-            binding("submit", "Enter", "Execute command", None),
-        ],
     }
 }
 
@@ -284,21 +245,6 @@ fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
         ],
         _ => vim_bindings(context),
     }
-}
-
-fn nav_bindings() -> Vec<BindingSpec> {
-    vec![
-        binding("nav_up", "k", "Move up", None),
-        binding("nav_down", "j", "Move down", None),
-        binding("nav_top", "g", "Jump to top", None),
-        binding("nav_bottom", "G", "Jump to bottom", None),
-        binding("nav_page_up", "Ctrl+u", "Page up", None),
-        binding("nav_page_down", "Ctrl+d", "Page down", None),
-        binding("nav_up_alt", "Up", "Move up", None),
-        binding("nav_down_alt", "Down", "Move down", None),
-        binding("nav_page_up_alt", "PageUp", "Page up", None),
-        binding("nav_page_down_alt", "PageDown", "Page down", None),
-    ]
 }
 
 fn binding(id: &'static str, key: &str, description: &'static str, action: Option<Action>) -> BindingSpec {
