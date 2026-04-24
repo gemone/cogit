@@ -71,7 +71,7 @@ impl Panel for LogPanel {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
 
-        // Commit list
+        // Commit list with graph
         let title = if self.search_mode {
             format!(" Log [search: {}] ", self.search_query)
         } else {
@@ -82,14 +82,34 @@ impl Panel for LogPanel {
             .commits
             .iter()
             .map(|c| {
-                let line = Line::from(vec![
-                    Span::styled(
-                        format!("{} ", c.short_hash),
-                        self.styles.addition.add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(&c.subject, self.styles.text_primary),
-                ]);
-                ListItem::new(line)
+                let mut spans = Vec::new();
+
+                // Graph prefix (colored differently)
+                if !c.graph_prefix.is_empty() {
+                    spans.push(Span::styled(
+                        c.graph_prefix.clone(),
+                        self.styles.text_secondary,
+                    ));
+                }
+
+                // Hash
+                spans.push(Span::styled(
+                    format!("{} ", c.short_hash),
+                    self.styles.addition.add_modifier(Modifier::BOLD),
+                ));
+
+                // Refs (HEAD -> main, tag: v1.0)
+                if !c.refs.is_empty() {
+                    spans.push(Span::styled(
+                        format!("({}) ", c.refs),
+                        self.styles.border_active,
+                    ));
+                }
+
+                // Subject
+                spans.push(Span::styled(&c.subject, self.styles.text_primary));
+
+                ListItem::new(Line::from(spans))
             })
             .collect();
 
@@ -179,6 +199,7 @@ impl Panel for LogPanel {
         match key.code {
             KeyCode::Char('y') => self.selected_hash().map(Action::CopyHash),
             KeyCode::Char('c') => self.selected_hash().map(Action::CherryPick),
+            KeyCode::Char('r') => self.selected_hash().map(Action::Revert),
             KeyCode::Char('/') => {
                 self.search_mode = true;
                 None

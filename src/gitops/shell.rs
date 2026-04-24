@@ -201,23 +201,11 @@ impl Repository {
         let output = self.git_cmd(&[
             "log",
             &format!("-{}", count),
-            "--pretty=format:%H|%h|%an|%ae|%aI|%s",
+            "--graph",
+            "--decorate",
+            &format!("--pretty=format:§%H|%h|%an|%ae|%aI|%D|%s"),
         ])?;
-        let mut commits = Vec::new();
-        for line in output.lines() {
-            let parts: Vec<&str> = line.splitn(6, '|').collect();
-            if parts.len() == 6 {
-                commits.push(CommitInfo {
-                    hash: parts[0].to_string(),
-                    short_hash: parts[1].to_string(),
-                    author_name: parts[2].to_string(),
-                    author_email: parts[3].to_string(),
-                    date: parts[4].to_string(),
-                    subject: parts[5].to_string(),
-                });
-            }
-        }
-        Ok(commits)
+        Self::parse_log_output(&output)
     }
 
     pub fn log_search(&self, pattern: &str, count: usize) -> Result<Vec<CommitInfo>> {
@@ -225,20 +213,33 @@ impl Repository {
             "log",
             &format!("-{}", count),
             &format!("--grep={}", pattern),
-            "--pretty=format:%H|%h|%an|%ae|%aI|%s",
+            "--graph",
+            "--decorate",
+            &format!("--pretty=format:§%H|%h|%an|%ae|%aI|%D|%s"),
         ])?;
+        Self::parse_log_output(&output)
+    }
+
+    fn parse_log_output(output: &str) -> Result<Vec<CommitInfo>> {
+        let sep_char = '§';
         let mut commits = Vec::new();
         for line in output.lines() {
-            let parts: Vec<&str> = line.splitn(6, '|').collect();
-            if parts.len() == 6 {
-                commits.push(CommitInfo {
-                    hash: parts[0].to_string(),
-                    short_hash: parts[1].to_string(),
-                    author_name: parts[2].to_string(),
-                    author_email: parts[3].to_string(),
-                    date: parts[4].to_string(),
-                    subject: parts[5].to_string(),
-                });
+            if let Some(pos) = line.find(sep_char) {
+                let graph_prefix = line[..pos].to_string();
+                let data = &line[pos + sep_char.len_utf8()..];
+                let parts: Vec<&str> = data.splitn(7, '|').collect();
+                if parts.len() >= 7 {
+                    commits.push(CommitInfo {
+                        hash: parts[0].to_string(),
+                        short_hash: parts[1].to_string(),
+                        author_name: parts[2].to_string(),
+                        author_email: parts[3].to_string(),
+                        date: parts[4].to_string(),
+                        refs: parts[5].to_string(),
+                        subject: parts[6].to_string(),
+                        graph_prefix,
+                    });
+                }
             }
         }
         Ok(commits)
@@ -262,6 +263,8 @@ impl Repository {
                 author_email: parts[3].to_string(),
                 date: parts[4].to_string(),
                 subject: parts[5].to_string(),
+                graph_prefix: String::new(),
+                refs: String::new(),
             }
         } else {
             CommitInfo {
@@ -271,6 +274,8 @@ impl Repository {
                 author_email: String::new(),
                 date: String::new(),
                 subject: first_line.to_string(),
+                graph_prefix: String::new(),
+                refs: String::new(),
             }
         };
         let body: String = lines.collect::<Vec<_>>().join("\n");
@@ -280,6 +285,38 @@ impl Repository {
     pub fn cherry_pick(&self, hash: &str) -> Result<String> {
         let output = self.git_cmd(&["cherry-pick", hash])?;
         Ok(output)
+    }
+
+    pub fn undo(&self) -> Result<String> {
+        // Reset to previous reflog entry, keeping working tree intact
+        let output = self.git_cmd(&["reset", "--keep", "HEAD@{1}"])?;
+        Ok(output.trim().to_string())
+    }
+
+    pub fn revert(&self, hash: &str) -> Result<String> {
+        let output = self.git_cmd(&["revert", "--no-edit", hash])?;
+        Ok(output.trim().to_string())
+    }
+
+    pub fn reflog(&self, count: usize) -> Result<Vec<ReflogEntry>> {
+        let output = self.git_cmd(&[
+            "reflog",
+            &format!("-{}", count),
+            "--pretty=format:%H|%h|%gs|%s",
+        ])?;
+        let mut entries = Vec::new();
+        for line in output.lines() {
+            let parts: Vec<&str> = line.splitn(4, '|').collect();
+            if parts.len() == 4 {
+                entries.push(ReflogEntry {
+                    hash: parts[0].to_string(),
+                    short_hash: parts[1].to_string(),
+                    action: parts[2].to_string(),
+                    subject: parts[3].to_string(),
+                });
+            }
+        }
+        Ok(entries)
     }
 
     pub fn tag_list(&self) -> Result<Vec<TagInfo>> {
