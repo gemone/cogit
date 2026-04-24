@@ -22,6 +22,23 @@ pub enum KeyContext {
     Command,
 }
 
+impl KeyContext {
+    /// Override map key used in KeymapOverrides.views
+    fn override_key(self) -> Option<&'static str> {
+        match self {
+            Self::Global => None,
+            Self::Main => Some("main"),
+            Self::Branches => Some("branches"),
+            Self::Log => Some("log"),
+            Self::Stash => Some("stash"),
+            Self::Remote => Some("remote"),
+            Self::Shelve => Some("shelve"),
+            Self::Navigation => Some("navigation"),
+            Self::Command => Some("command"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListMotion {
     Up,
@@ -83,16 +100,22 @@ impl KeymapManager {
         self.preset().as_str()
     }
 
-    /// Resolve a key press to an action. Skips hint-only bindings (action: None).
+    /// Resolve a key to an action. Checks context bindings first, then Global.
+    /// Skips hint-only bindings (action: None) so they don't block further search.
     pub fn resolve(&self, context: KeyContext, key: KeyEvent) -> Option<Action> {
         let pressed = key_label(key);
         let state = self.state.read().expect("keymap lock poisoned");
-        for spec in bindings_for(state.preset, context, &state.overrides)
-            .into_iter()
-            .chain(bindings_for(state.preset, KeyContext::Global, &state.overrides).into_iter())
-        {
+
+        let context_specs = bindings_for(state.preset, context, &state.overrides);
+        let global_specs = if context != KeyContext::Global {
+            bindings_for(state.preset, KeyContext::Global, &state.overrides)
+        } else {
+            Vec::new()
+        };
+
+        for spec in context_specs.into_iter().chain(global_specs) {
             if spec.key.eq_ignore_ascii_case(&pressed) {
-                if let Some(action) = spec.action.clone() {
+                if let Some(action) = spec.action {
                     return Some(action);
                 }
             }
@@ -123,31 +146,17 @@ impl KeymapManager {
         let state = self.state.read().expect("keymap lock poisoned");
         bindings_for(state.preset, context, &state.overrides)
             .into_iter()
-            .map(|spec| KeyBindingHint {
-                key: spec.key,
-                description: spec.description,
-            })
+            .map(|spec| KeyBindingHint { key: spec.key, description: spec.description })
             .collect()
     }
 
     pub fn override_binding(&self, context: KeyContext, action_id: &str, key: String) {
         let mut state = self.state.write().expect("keymap lock poisoned");
-        let context_overrides = overrides_mut(&mut state.overrides, context);
-        context_overrides.insert(action_id.to_string(), key);
-    }
-}
-
-fn overrides_mut(overrides: &mut KeymapOverrides, context: KeyContext) -> &mut BTreeMap<String, String> {
-    match context {
-        KeyContext::Global => &mut overrides.global,
-        KeyContext::Main => overrides.views.entry("main".to_string()).or_default(),
-        KeyContext::Branches => overrides.views.entry("branches".to_string()).or_default(),
-        KeyContext::Log => overrides.views.entry("log".to_string()).or_default(),
-        KeyContext::Stash => overrides.views.entry("stash".to_string()).or_default(),
-        KeyContext::Remote => overrides.views.entry("remote".to_string()).or_default(),
-        KeyContext::Shelve => overrides.views.entry("shelve".to_string()).or_default(),
-        KeyContext::Navigation => overrides.views.entry("navigation".to_string()).or_default(),
-        KeyContext::Command => overrides.views.entry("command".to_string()).or_default(),
+        if let Some(k) = context.override_key() {
+            state.overrides.views.entry(k.to_string()).or_default().insert(action_id.to_string(), key);
+        } else {
+            state.overrides.global.insert(action_id.to_string(), key);
+        }
     }
 }
 
@@ -157,16 +166,9 @@ fn bindings_for(preset: KeymapPreset, context: KeyContext, overrides: &KeymapOve
         KeymapPreset::Helix => helix_bindings(context),
     };
 
-    let override_map = match context {
-        KeyContext::Global => Some(&overrides.global),
-        KeyContext::Main => overrides.views.get("main"),
-        KeyContext::Branches => overrides.views.get("branches"),
-        KeyContext::Log => overrides.views.get("log"),
-        KeyContext::Stash => overrides.views.get("stash"),
-        KeyContext::Remote => overrides.views.get("remote"),
-        KeyContext::Shelve => overrides.views.get("shelve"),
-        KeyContext::Navigation => overrides.views.get("navigation"),
-        KeyContext::Command => overrides.views.get("command"),
+    let override_map = match context.override_key() {
+        None => Some(&overrides.global),
+        Some(k) => overrides.views.get(k),
     };
 
     if let Some(map) = override_map {
@@ -303,38 +305,28 @@ fn nav_bindings() -> Vec<BindingSpec> {
 }
 
 fn binding(id: &'static str, key: &str, description: &'static str, action: Option<Action>) -> BindingSpec {
-    BindingSpec {
-        id,
-        key: key.to_string(),
-        description,
-        action,
-    }
+    BindingSpec { id, key: key.to_string(), description, action }
 }
 
 fn key_label(key: KeyEvent) -> String {
     match key.code {
-        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char(' ') => "Space".into(),
         KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
             format!("Ctrl+{}", c.to_ascii_lowercase())
         }
         KeyCode::Char(c) => c.to_string(),
-        KeyCode::Enter => "Enter".to_string(),
-        KeyCode::Esc => "Esc".to_string(),
-        KeyCode::Tab => {
-            if key.modifiers.contains(KeyModifiers::SHIFT) {
-                "Shift+Tab".to_string()
-            } else {
-                "Tab".to_string()
-            }
-        }
-        KeyCode::BackTab => "Shift+Tab".to_string(),
-        KeyCode::Backspace => "Backspace".to_string(),
-        KeyCode::PageUp => "PageUp".to_string(),
-        KeyCode::PageDown => "PageDown".to_string(),
-        KeyCode::Up => "Up".to_string(),
-        KeyCode::Down => "Down".to_string(),
-        KeyCode::Left => "Left".to_string(),
-        KeyCode::Right => "Right".to_string(),
+        KeyCode::Enter => "Enter".into(),
+        KeyCode::Esc => "Esc".into(),
+        KeyCode::BackTab => "Shift+Tab".into(),
+        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => "Shift+Tab".into(),
+        KeyCode::Tab => "Tab".into(),
+        KeyCode::Backspace => "Backspace".into(),
+        KeyCode::PageUp => "PageUp".into(),
+        KeyCode::PageDown => "PageDown".into(),
+        KeyCode::Up => "Up".into(),
+        KeyCode::Down => "Down".into(),
+        KeyCode::Left => "Left".into(),
+        KeyCode::Right => "Right".into(),
         _ => format!("{:?}", key.code),
     }
 }
@@ -344,44 +336,46 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    #[test]
-    fn helix_global_uses_colon_for_command_palette() {
-        let cfg = CogitConfig { keymap: crate::config::KeymapConfig { preset: KeymapPreset::Helix, overrides: KeymapOverrides::default() } };
-        let km = KeymapManager::new(&cfg);
-        let action = km.resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
-        assert!(matches!(action, Some(Action::OpenCommandPalette)));
+    fn vim_km() -> KeymapManager {
+        KeymapManager::new(&CogitConfig::default())
+    }
+
+    fn helix_km() -> KeymapManager {
+        KeymapManager::new(&CogitConfig {
+            keymap: crate::config::KeymapConfig { preset: KeymapPreset::Helix, overrides: KeymapOverrides::default() },
+        })
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
     }
 
     #[test]
-    fn vim_global_uses_colon_for_command_palette() {
-        let cfg = CogitConfig::default();
-        let km = KeymapManager::new(&cfg);
-        let action = km.resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
-        assert!(matches!(action, Some(Action::OpenCommandPalette)));
+    fn helix_global_colon_opens_command_palette() {
+        assert!(matches!(helix_km().resolve(KeyContext::Global, key(KeyCode::Char(':'))), Some(Action::OpenCommandPalette)));
+    }
+
+    #[test]
+    fn vim_global_colon_opens_command_palette() {
+        assert!(matches!(vim_km().resolve(KeyContext::Global, key(KeyCode::Char(':'))), Some(Action::OpenCommandPalette)));
     }
 
     #[test]
     fn vim_main_space_toggles_stage() {
-        let cfg = CogitConfig::default();
-        let km = KeymapManager::new(&cfg);
-        let action = km.resolve(KeyContext::Main, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
-        assert!(matches!(action, Some(Action::ToggleStage)));
+        assert!(matches!(vim_km().resolve(KeyContext::Main, key(KeyCode::Char(' '))), Some(Action::ToggleStage)));
     }
 
     #[test]
-    fn hint_only_bindings_are_skipped() {
-        let cfg = CogitConfig::default();
-        let km = KeymapManager::new(&cfg);
-        // open_diff is hint-only (None) in Main — Enter should not resolve to anything
-        let action = km.resolve(KeyContext::Main, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(action.is_none());
+    fn hint_only_bindings_skipped() {
+        // open_diff is hint-only (None) — Enter should not resolve
+        assert!(vim_km().resolve(KeyContext::Main, key(KeyCode::Enter)).is_none());
     }
 
     #[test]
-    fn vim_global_shelve_on_w() {
-        let cfg = CogitConfig::default();
-        let km = KeymapManager::new(&cfg);
-        let action = km.resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT));
-        assert!(matches!(action, Some(Action::ShowShelvePanel)));
+    fn vim_global_w_opens_shelve() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT)),
+            Some(Action::ShowShelvePanel)
+        ));
     }
 }
