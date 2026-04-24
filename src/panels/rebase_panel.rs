@@ -106,6 +106,20 @@ impl Panel for RebasePanel {
             return None;
         }
 
+        // Check rebase-specific keys BEFORE handle_list_navigation,
+        // which intercepts J/K as PageDown/PageUp.
+        match key.code {
+            KeyCode::Char('J') | KeyCode::Char('N') => {
+                self.move_down();
+                return None;
+            }
+            KeyCode::Char('K') | KeyCode::Char('P') => {
+                self.move_up();
+                return None;
+            }
+            _ => {}
+        }
+
         if handle_list_navigation(&mut self.state, self.todos.len(), key) {
             return None;
         }
@@ -117,14 +131,6 @@ impl Panel for RebasePanel {
             }
             KeyCode::Char('S') => {
                 self.cycle_action(false);
-                None
-            }
-            KeyCode::Char('J') | KeyCode::Char('N') => {
-                self.move_down();
-                None
-            }
-            KeyCode::Char('K') | KeyCode::Char('P') => {
-                self.move_up();
                 None
             }
             KeyCode::Enter => {

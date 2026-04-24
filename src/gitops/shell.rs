@@ -673,11 +673,18 @@ impl Repository {
         let todo_path = dir.join("git-rebase-todo");
         std::fs::write(&todo_path, &todo_content)?;
 
-        let editor_script = format!("cp {} \"$1\"", todo_path.display());
+        // git appends the todo-file path as the last arg when calling
+        // GIT_SEQUENCE_EDITOR, so `cp <our-file>` becomes `cp <our-file> <todo>`.
+        let editor_script = format!("cp {}", todo_path.display());
 
         let output = self.git_cmd_with_env(
             &["rebase", "-i", onto],
-            &[("GIT_SEQUENCE_EDITOR", editor_script.as_str())],
+            &[
+                ("GIT_SEQUENCE_EDITOR", editor_script.as_str()),
+                // Accept default commit messages for squash/reword without
+                // opening an interactive editor (no TTY available).
+                ("GIT_EDITOR", "true"),
+            ],
         )?;
         Ok(output)
     }
