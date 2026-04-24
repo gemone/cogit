@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::{
@@ -18,6 +19,16 @@ pub enum KeyContext {
 }
 
 impl KeyContext {
+    const ALL: [KeyContext; 7] = [
+        KeyContext::Global,
+        KeyContext::Main,
+        KeyContext::Branches,
+        KeyContext::Log,
+        KeyContext::Stash,
+        KeyContext::Remote,
+        KeyContext::Shelve,
+    ];
+
     /// Override map key used in KeymapOverrides.views
     fn override_key(self) -> Option<&'static str> {
         match self {
@@ -45,10 +56,36 @@ struct BindingSpec {
     action: Option<Action>,
 }
 
+/// Pre-computed lookup for a single context.
+#[derive(Debug, Clone)]
+struct ContextCache {
+    /// Ordered specs for which-key display.
+    specs: Vec<BindingSpec>,
+    /// key label → action for fast resolve.
+    lookup: HashMap<String, Action>,
+}
+
 #[derive(Debug, Clone)]
 struct KeymapState {
     preset: KeymapPreset,
     overrides: KeymapOverrides,
+    cache: HashMap<KeyContext, ContextCache>,
+}
+
+impl KeymapState {
+    fn rebuild_cache(&mut self) {
+        self.cache.clear();
+        for ctx in KeyContext::ALL {
+            let specs = build_bindings(self.preset, ctx, &self.overrides);
+            let mut lookup = HashMap::new();
+            for spec in &specs {
+                if let Some(action) = spec.action.clone() {
+                    lookup.entry(spec.key.clone()).or_insert(action);
+                }
+            }
+            self.cache.insert(ctx, ContextCache { specs, lookup });
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -58,11 +95,14 @@ pub struct KeymapManager {
 
 impl KeymapManager {
     pub fn new(config: &CogitConfig) -> Self {
+        let mut state = KeymapState {
+            preset: config.keymap.preset,
+            overrides: config.keymap.overrides.clone(),
+            cache: HashMap::new(),
+        };
+        state.rebuild_cache();
         Self {
-            state: Arc::new(RwLock::new(KeymapState {
-                preset: config.keymap.preset,
-                overrides: config.keymap.overrides.clone(),
-            })),
+            state: Arc::new(RwLock::new(state)),
         }
     }
 
@@ -71,11 +111,15 @@ impl KeymapManager {
     }
 
     pub fn set_preset(&self, preset: KeymapPreset) {
-        self.state.write().expect("keymap lock poisoned").preset = preset;
+        let mut state = self.state.write().expect("keymap lock poisoned");
+        state.preset = preset;
+        state.rebuild_cache();
     }
 
     pub fn set_overrides(&self, overrides: KeymapOverrides) {
-        self.state.write().expect("keymap lock poisoned").overrides = overrides;
+        let mut state = self.state.write().expect("keymap lock poisoned");
+        state.overrides = overrides;
+        state.rebuild_cache();
     }
 
     pub fn preset_name(&self) -> &'static str {
@@ -88,29 +132,32 @@ impl KeymapManager {
         let pressed = key_label(key);
         let state = self.state.read().expect("keymap lock poisoned");
 
-        let context_specs = bindings_for(state.preset, context, &state.overrides);
-        let global_specs = if context != KeyContext::Global {
-            bindings_for(state.preset, KeyContext::Global, &state.overrides)
-        } else {
-            Vec::new()
-        };
+        // Check context first
+        if let Some(ctx) = state.cache.get(&context) {
+            if let Some(action) = ctx.lookup.get(&pressed).cloned() {
+                return Some(action);
+            }
+        }
 
-        for spec in context_specs.into_iter().chain(global_specs) {
-            if spec.key == pressed {
-                if let Some(action) = spec.action {
+        // Fallback to Global (skip if already Global)
+        if context != KeyContext::Global {
+            if let Some(global) = state.cache.get(&KeyContext::Global) {
+                if let Some(action) = global.lookup.get(&pressed).cloned() {
                     return Some(action);
                 }
             }
         }
+
         None
     }
 
     pub fn bindings_for(&self, context: KeyContext) -> Vec<KeyBindingHint> {
         let state = self.state.read().expect("keymap lock poisoned");
-        bindings_for(state.preset, context, &state.overrides)
-            .into_iter()
-            .map(|spec| KeyBindingHint { key: spec.key, description: spec.description })
-            .collect()
+        state.cache.get(&context)
+            .map(|ctx| ctx.specs.iter()
+                .map(|spec| KeyBindingHint { key: spec.key.clone(), description: spec.description })
+                .collect())
+            .unwrap_or_default()
     }
 
     pub fn override_binding(&self, context: KeyContext, action_id: &str, key: String) {
@@ -120,10 +167,11 @@ impl KeymapManager {
         } else {
             state.overrides.global.insert(action_id.to_string(), key);
         }
+        state.rebuild_cache();
     }
 }
 
-fn bindings_for(preset: KeymapPreset, context: KeyContext, overrides: &KeymapOverrides) -> Vec<BindingSpec> {
+fn build_bindings(preset: KeymapPreset, context: KeyContext, overrides: &KeymapOverrides) -> Vec<BindingSpec> {
     let mut defaults = match preset {
         KeymapPreset::Vim => vim_bindings(context),
         KeymapPreset::Helix => helix_bindings(context),
@@ -344,5 +392,13 @@ mod tests {
             vim_km().resolve(KeyContext::Main, KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT)),
             Some(Action::UnstageAll)
         ));
+    }
+
+    #[test]
+    fn set_preset_rebuilds_cache() {
+        let km = vim_km();
+        assert!(km.resolve(KeyContext::Global, key(KeyCode::Tab)).is_none());
+        km.set_preset(KeymapPreset::Helix);
+        assert!(matches!(km.resolve(KeyContext::Global, key(KeyCode::Tab)), Some(Action::NextView)));
     }
 }

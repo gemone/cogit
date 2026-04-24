@@ -96,7 +96,7 @@ impl ConfigFile {
     }
 
     pub fn config_dir() -> Option<PathBuf> {
-        ProjectDirs::from("io", "gemone", "cogit").map(|dirs| dirs.config_dir().to_path_buf())
+        ProjectDirs::from("one", "gemo", "cogit").map(|dirs| dirs.config_dir().to_path_buf())
     }
 }
 

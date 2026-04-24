@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -110,24 +110,6 @@ impl Panel for FileListPanel {
                 }
                 None
             }
-            KeyCode::Char(' ') => {
-                let i = self.state.selected().unwrap_or(0);
-                if let Some(file) = self.files.get(i) {
-                    if file.staged {
-                        return Some(Action::Unstage);
-                    } else {
-                        return Some(Action::Stage);
-                    }
-                }
-                None
-            }
-            KeyCode::Char('a') => Some(Action::StageAll),
-            KeyCode::Char('c') => Some(Action::CommitDialog),
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Reset dialog for selected file (mixed mode unstages)
-                Some(Action::ResetDialog("mixed".to_string()))
-            }
-            KeyCode::Char('u') => Some(Action::UnstageAll),
             _ => None,
         }
     }
