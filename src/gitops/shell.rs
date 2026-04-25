@@ -203,7 +203,8 @@ impl Repository {
             &format!("-{}", count),
             "--graph",
             "--decorate",
-            &format!("--pretty=format:§%H|%h|%an|%ae|%aI|%D|%s"),
+            "-c", "i18n.logoutputencoding=UTF-8",
+            "--pretty=format:%x1f%H|%h|%an|%ae|%aI|%D|%s",
         ])?;
         Self::parse_log_output(&output)
     }
@@ -215,18 +216,19 @@ impl Repository {
             &format!("--grep={}", pattern),
             "--graph",
             "--decorate",
-            &format!("--pretty=format:§%H|%h|%an|%ae|%aI|%D|%s"),
+            "-c", "i18n.logoutputencoding=UTF-8",
+            "--pretty=format:%x1f%H|%h|%an|%ae|%aI|%D|%s",
         ])?;
         Self::parse_log_output(&output)
     }
 
     fn parse_log_output(output: &str) -> Result<Vec<CommitInfo>> {
-        let sep_char = '§';
+        let sep = '\u{1f}';
         let mut commits = Vec::new();
         for line in output.lines() {
-            if let Some(pos) = line.find(sep_char) {
+            if let Some(pos) = line.find(sep) {
                 let graph_prefix = line[..pos].to_string();
-                let data = &line[pos + sep_char.len_utf8()..];
+                let data = &line[pos + 1..];
                 let parts: Vec<&str> = data.splitn(7, '|').collect();
                 if parts.len() >= 7 {
                     commits.push(CommitInfo {
@@ -806,5 +808,64 @@ mod tests {
         let status = repo.status().unwrap();
         assert!(status.staged.is_empty());
         assert!(!status.unstaged.is_empty());
+    }
+
+    #[test]
+    fn test_undo_resets_to_previous_commit() {
+        let (repo, dir) = setup_test_repo("undo");
+        let head_before = repo.git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Create a second commit
+        fs::write(dir.join("file.txt"), "second\n").unwrap();
+        repo.stage("file.txt").unwrap();
+        repo.git_cmd(&["commit", "-m", "second"]).unwrap();
+        let head_after = repo.git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        assert_ne!(head_before, head_after, "commit should advance HEAD");
+
+        // Undo should move HEAD back
+        repo.undo().unwrap();
+        let head_after_undo = repo.git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        assert_eq!(
+            head_before, head_after_undo,
+            "undo should restore previous HEAD"
+        );
+    }
+
+    #[test]
+    fn test_revert_creates_new_commit() {
+        let (repo, dir) = setup_test_repo("revert");
+
+        // Create a second commit
+        fs::write(dir.join("file.txt"), "second\n").unwrap();
+        repo.stage("file.txt").unwrap();
+        repo.git_cmd(&["commit", "-m", "second"]).unwrap();
+        let head_second = repo.git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Revert the second commit
+        repo.revert(&head_second).unwrap();
+        let head_after_revert = repo.git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        assert_ne!(
+            head_second, head_after_revert,
+            "revert should create a new commit"
+        );
+
+        // File content should be back to initial state
+        let content = fs::read_to_string(dir.join("file.txt")).unwrap();
+        assert_eq!(content, "initial\n", "revert should restore file content");
     }
 }

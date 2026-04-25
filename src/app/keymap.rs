@@ -204,7 +204,7 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("view_stash", "4", "Open stash/shelve panel", Some(Action::ShowStashPanel)),
             binding("view_remote", "R", "Open remotes panel", Some(Action::ShowRemotePanel)),
             binding("view_shelve", "W", "Open shelves panel", Some(Action::ShowShelvePanel)),
-            binding("undo", "u", "Undo last operation", Some(Action::Undo)),
+            binding("undo", "Ctrl+z", "Undo last operation", Some(Action::Undo)),
         ],
         KeyContext::Main => vec![
             binding("stage", "s", "Stage selected file", Some(Action::Stage)),

@@ -87,7 +87,7 @@ impl Panel for LogPanel {
                 // Graph prefix (colored differently)
                 if !c.graph_prefix.is_empty() {
                     spans.push(Span::styled(
-                        c.graph_prefix.clone(),
+                        c.graph_prefix.as_str(),
                         self.styles.text_secondary,
                     ));
                 }
