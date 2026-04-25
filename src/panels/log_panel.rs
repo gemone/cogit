@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::Modifier,
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
@@ -13,6 +13,50 @@ use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::types::CommitDetail;
 use crate::gitops::Repository;
+
+/// Branch-line colors for graph rendering (lazygit-style cycling)
+const GRAPH_COLORS: &[Color] = &[
+    Color::Blue,
+    Color::Magenta,
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Red,
+];
+
+/// Split a graph prefix into colored spans for branch lines
+fn colored_graph_spans(prefix: &str, base_style: Style) -> Vec<Span<'_>> {
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    let mut spans = Vec::new();
+    let mut buf = String::new();
+    let mut color_idx: usize = 0;
+
+    for ch in prefix.chars() {
+        match ch {
+            '|' | '\\' | '/' => {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(buf.clone(), base_style));
+                    buf.clear();
+                }
+                let line_color = GRAPH_COLORS[color_idx % GRAPH_COLORS.len()];
+                spans.push(Span::styled(
+                    ch.to_string(),
+                    base_style.fg(line_color),
+                ));
+                color_idx += 1;
+            }
+            _ => {
+                buf.push(ch);
+            }
+        }
+    }
+    if !buf.is_empty() {
+        spans.push(Span::styled(buf, base_style));
+    }
+    spans
+}
 
 pub struct LogPanel {
     repo: std::path::PathBuf,
@@ -84,12 +128,14 @@ impl Panel for LogPanel {
             .map(|c| {
                 let mut spans = Vec::new();
 
-                // Graph prefix (colored differently)
+                // Graph prefix with colored branch lines
                 if !c.graph_prefix.is_empty() {
-                    spans.push(Span::styled(
-                        c.graph_prefix.as_str(),
-                        self.styles.text_secondary,
-                    ));
+                    spans.extend(colored_graph_spans(&c.graph_prefix, self.styles.text_secondary));
+                }
+
+                // Connector rows (pure graph lines without commit data) only show lines
+                if c.hash.is_empty() {
+                    return ListItem::new(Line::from(spans));
                 }
 
                 // Hash
