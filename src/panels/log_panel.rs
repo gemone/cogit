@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::Modifier,
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
@@ -13,6 +13,50 @@ use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::types::CommitDetail;
 use crate::gitops::Repository;
+
+/// Branch-line colors for graph rendering (lazygit-style cycling)
+const GRAPH_COLORS: &[Color] = &[
+    Color::Blue,
+    Color::Magenta,
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Red,
+];
+
+/// Split a graph prefix into colored spans for branch lines
+fn colored_graph_spans(prefix: &str, base_style: Style) -> Vec<Span<'_>> {
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    let mut spans = Vec::new();
+    let mut buf = String::new();
+    let mut color_idx: usize = 0;
+
+    for ch in prefix.chars() {
+        match ch {
+            '|' | '\\' | '/' => {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(buf.clone(), base_style));
+                    buf.clear();
+                }
+                let line_color = GRAPH_COLORS[color_idx % GRAPH_COLORS.len()];
+                spans.push(Span::styled(
+                    ch.to_string(),
+                    base_style.fg(line_color),
+                ));
+                color_idx += 1;
+            }
+            _ => {
+                buf.push(ch);
+            }
+        }
+    }
+    if !buf.is_empty() {
+        spans.push(Span::styled(buf, base_style));
+    }
+    spans
+}
 
 pub struct LogPanel {
     repo: std::path::PathBuf,
@@ -45,7 +89,10 @@ impl LogPanel {
 
     fn selected_hash(&self) -> Option<String> {
         let i = self.state.selected().unwrap_or(0);
-        self.commits.get(i).map(|c| c.hash.clone())
+        self.commits
+            .get(i)
+            .filter(|c| !c.hash.is_empty())
+            .map(|c| c.hash.clone())
     }
 }
 
@@ -71,7 +118,7 @@ impl Panel for LogPanel {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
 
-        // Commit list
+        // Commit list with graph
         let title = if self.search_mode {
             format!(" Log [search: {}] ", self.search_query)
         } else {
@@ -82,14 +129,36 @@ impl Panel for LogPanel {
             .commits
             .iter()
             .map(|c| {
-                let line = Line::from(vec![
-                    Span::styled(
-                        format!("{} ", c.short_hash),
-                        self.styles.addition.add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(&c.subject, self.styles.text_primary),
-                ]);
-                ListItem::new(line)
+                let mut spans = Vec::new();
+
+                // Graph prefix with colored branch lines
+                if !c.graph_prefix.is_empty() {
+                    spans.extend(colored_graph_spans(&c.graph_prefix, self.styles.text_secondary));
+                }
+
+                // Connector rows (pure graph lines without commit data) only show lines
+                if c.hash.is_empty() {
+                    return ListItem::new(Line::from(spans));
+                }
+
+                // Hash
+                spans.push(Span::styled(
+                    format!("{} ", c.short_hash),
+                    self.styles.addition.add_modifier(Modifier::BOLD),
+                ));
+
+                // Refs (HEAD -> main, tag: v1.0)
+                if !c.refs.is_empty() {
+                    spans.push(Span::styled(
+                        format!("({}) ", c.refs),
+                        self.styles.border_active,
+                    ));
+                }
+
+                // Subject
+                spans.push(Span::styled(&c.subject, self.styles.text_primary));
+
+                ListItem::new(Line::from(spans))
             })
             .collect();
 
@@ -179,6 +248,7 @@ impl Panel for LogPanel {
         match key.code {
             KeyCode::Char('y') => self.selected_hash().map(Action::CopyHash),
             KeyCode::Char('c') => self.selected_hash().map(Action::CherryPick),
+            KeyCode::Char('r') => self.selected_hash().map(Action::Revert),
             KeyCode::Char('/') => {
                 self.search_mode = true;
                 None

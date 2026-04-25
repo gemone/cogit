@@ -1327,6 +1327,28 @@ impl App {
                     self.notifications.notify(&format!("Keymap preset switched to {}", preset.as_str()));
                 }
             }
+            Action::Undo => {
+                match self.repo.undo() {
+                    Ok(msg) => {
+                        self.notifications.notify(&format!("Undo: {}", msg));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Undo failed: {}", e));
+                    }
+                }
+            }
+            Action::Revert(hash) => {
+                match self.repo.revert(&hash) {
+                    Ok(_) => {
+                        self.notifications.notify(&format!("Reverted {}", &hash[..7.min(hash.len())]));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications.notify_error(&format!("Revert failed: {}", e));
+                    }
+                }
+            }
             Action::AddRemote(name, url) => {
                 match self.repo.add_remote(&name, &url) {
                     Ok(_) => {

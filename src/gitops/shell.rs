@@ -201,23 +201,12 @@ impl Repository {
         let output = self.git_cmd(&[
             "log",
             &format!("-{}", count),
-            "--pretty=format:%H|%h|%an|%ae|%aI|%s",
+            "--all",
+            "--graph",
+            "--decorate",
+            "--pretty=format:%x1f%H|%h|%an|%ae|%aI|%D|%s",
         ])?;
-        let mut commits = Vec::new();
-        for line in output.lines() {
-            let parts: Vec<&str> = line.splitn(6, '|').collect();
-            if parts.len() == 6 {
-                commits.push(CommitInfo {
-                    hash: parts[0].to_string(),
-                    short_hash: parts[1].to_string(),
-                    author_name: parts[2].to_string(),
-                    author_email: parts[3].to_string(),
-                    date: parts[4].to_string(),
-                    subject: parts[5].to_string(),
-                });
-            }
-        }
-        Ok(commits)
+        Self::parse_log_output(&output)
     }
 
     pub fn log_search(&self, pattern: &str, count: usize) -> Result<Vec<CommitInfo>> {
@@ -225,20 +214,46 @@ impl Repository {
             "log",
             &format!("-{}", count),
             &format!("--grep={}", pattern),
-            "--pretty=format:%H|%h|%an|%ae|%aI|%s",
+            "--all",
+            "--graph",
+            "--decorate",
+            "--pretty=format:%x1f%H|%h|%an|%ae|%aI|%D|%s",
         ])?;
+        Self::parse_log_output(&output)
+    }
+    fn parse_log_output(output: &str) -> Result<Vec<CommitInfo>> {
+        let sep = '\u{1f}';
         let mut commits = Vec::new();
+
         for line in output.lines() {
-            let parts: Vec<&str> = line.splitn(6, '|').collect();
-            if parts.len() == 6 {
-                commits.push(CommitInfo {
-                    hash: parts[0].to_string(),
-                    short_hash: parts[1].to_string(),
-                    author_name: parts[2].to_string(),
-                    author_email: parts[3].to_string(),
-                    date: parts[4].to_string(),
-                    subject: parts[5].to_string(),
-                });
+            if let Some(pos) = line.find(sep) {
+                let graph_prefix = line[..pos].to_string();
+                let data = &line[pos + 1..];
+                let parts: Vec<&str> = data.splitn(7, '|').collect();
+                if parts.len() >= 7 {
+                    commits.push(CommitInfo {
+                        hash: parts[0].to_string(),
+                        short_hash: parts[1].to_string(),
+                        author_name: parts[2].to_string(),
+                        author_email: parts[3].to_string(),
+                        date: parts[4].to_string(),
+                        refs: parts[5].to_string(),
+                        subject: parts[6].to_string(),
+                        graph_prefix,
+                    });
+                }
+            } else {
+                // Pure graph line (branch merge/fork connectors like "|/", "|\", "|\")
+                // Keep as connector row for visual continuity
+                let trimmed = line.trim();
+                if !trimmed.is_empty()
+                    && trimmed.chars().all(|c| "|/\\* ".contains(c))
+                {
+                    commits.push(CommitInfo {
+                        graph_prefix: line.to_string(),
+                        ..CommitInfo::default()
+                    });
+                }
             }
         }
         Ok(commits)
@@ -262,6 +277,8 @@ impl Repository {
                 author_email: parts[3].to_string(),
                 date: parts[4].to_string(),
                 subject: parts[5].to_string(),
+                graph_prefix: String::new(),
+                refs: String::new(),
             }
         } else {
             CommitInfo {
@@ -271,6 +288,8 @@ impl Repository {
                 author_email: String::new(),
                 date: String::new(),
                 subject: first_line.to_string(),
+                graph_prefix: String::new(),
+                refs: String::new(),
             }
         };
         let body: String = lines.collect::<Vec<_>>().join("\n");
@@ -280,6 +299,41 @@ impl Repository {
     pub fn cherry_pick(&self, hash: &str) -> Result<String> {
         let output = self.git_cmd(&["cherry-pick", hash])?;
         Ok(output)
+    }
+
+    pub fn undo(&self) -> Result<String> {
+        // Reset to previous reflog entry, keeping working tree intact
+        self.git_cmd(&["reset", "--keep", "HEAD@{1}"])?;
+        // Return the new HEAD short hash for meaningful notification
+        let head = self.git_cmd(&["rev-parse", "--short", "HEAD"])?;
+        Ok(head.trim().to_string())
+    }
+
+    pub fn revert(&self, hash: &str) -> Result<String> {
+        let output = self.git_cmd(&["revert", "--no-edit", hash])?;
+        Ok(output.trim().to_string())
+    }
+
+    pub fn reflog(&self, count: usize) -> Result<Vec<ReflogEntry>> {
+        let output = self.git_cmd(&[
+            "reflog",
+            &format!("-{}", count),
+            "--pretty=format:%x1f%H%x1f%h%x1f%gs%x1f%s",
+        ])?;
+        let mut entries = Vec::new();
+        let sep = '\u{1f}';
+        for line in output.lines() {
+            let parts: Vec<&str> = line.splitn(4, sep).collect();
+            if parts.len() == 4 {
+                entries.push(ReflogEntry {
+                    hash: parts[0].to_string(),
+                    short_hash: parts[1].to_string(),
+                    action: parts[2].to_string(),
+                    subject: parts[3].to_string(),
+                });
+            }
+        }
+        Ok(entries)
     }
 
     pub fn tag_list(&self) -> Result<Vec<TagInfo>> {
@@ -371,7 +425,10 @@ impl Repository {
                 // HEAD is present only for non-main worktrees
                 current.is_main = false;
             } else if line.starts_with("branch ") && in_worktree {
-                let branch = line.strip_prefix("refs/heads/").unwrap_or(&line[8..]).to_string();
+                let branch = line
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(&line[8..])
+                    .to_string();
                 current.branch = Some(branch);
             } else if line.trim().is_empty() && in_worktree {
                 // Empty line marks end of worktree entry
@@ -626,10 +683,15 @@ impl Repository {
 
         if local_exists {
             // Reset local branch to remote
-            let remote_ref = remote_branch.strip_prefix("remotes/").unwrap_or(remote_branch);
+            let remote_ref = remote_branch
+                .strip_prefix("remotes/")
+                .unwrap_or(remote_branch);
             self.git_cmd(&["branch", "-f", &branch_name, remote_ref])?;
             self.git_cmd(&["checkout", &branch_name])?;
-            Ok(format!("Reset and checked out existing branch: {}", branch_name))
+            Ok(format!(
+                "Reset and checked out existing branch: {}",
+                branch_name
+            ))
         } else {
             // Create new tracking branch
             let output = self.git_cmd(&["checkout", "-b", &branch_name, remote_branch])?;
@@ -708,7 +770,8 @@ mod tests {
         // Use -b main to ensure consistent branch name across git versions
         repo.git_cmd(&["init", "-b", "main"]).unwrap();
         repo.git_cmd(&["config", "user.name", "Test"]).unwrap();
-        repo.git_cmd(&["config", "user.email", "test@test.com"]).unwrap();
+        repo.git_cmd(&["config", "user.email", "test@test.com"])
+            .unwrap();
         fs::write(dir.join("file.txt"), "initial\n").unwrap();
         repo.git_cmd(&["add", "."]).unwrap();
         repo.git_cmd(&["commit", "-m", "initial"]).unwrap();
@@ -721,10 +784,12 @@ mod tests {
             .args(["config", "--global", "init.defaultBranch"])
             .output()
             .ok()
-            .and_then(|o| if o.status.success() {
-                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-            } else {
-                None
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| "main".to_string())
     }
@@ -749,6 +814,29 @@ mod tests {
     }
 
     #[test]
+    fn test_log_returns_commit_data() {
+        let (repo, dir) = setup_test_repo("log-data");
+
+        fs::write(dir.join("file.txt"), "second\n").unwrap();
+        repo.stage("file.txt").unwrap();
+        repo.git_cmd(&["commit", "-m", "second commit"]).unwrap();
+
+        let commits = repo.log(10).unwrap();
+        assert!(!commits.is_empty(), "log should return commit entries");
+
+        let latest = &commits[0];
+        assert_eq!(latest.subject, "second commit");
+        assert!(!latest.hash.is_empty(), "commit hash should be populated");
+        assert!(
+            !latest.short_hash.is_empty(),
+            "short hash should be populated"
+        );
+        assert_eq!(latest.author_name, "Test");
+        assert_eq!(latest.author_email, "test@test.com");
+        assert!(!latest.date.is_empty(), "commit date should be populated");
+    }
+
+    #[test]
     fn test_checkout() {
         let (repo, _dir) = setup_test_repo("checkout");
         repo.create_branch("feature").unwrap();
@@ -769,5 +857,69 @@ mod tests {
         let status = repo.status().unwrap();
         assert!(status.staged.is_empty());
         assert!(!status.unstaged.is_empty());
+    }
+
+    #[test]
+    fn test_undo_resets_to_previous_commit() {
+        let (repo, dir) = setup_test_repo("undo");
+        let head_before = repo
+            .git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Create a second commit
+        fs::write(dir.join("file.txt"), "second\n").unwrap();
+        repo.stage("file.txt").unwrap();
+        repo.git_cmd(&["commit", "-m", "second"]).unwrap();
+        let head_after = repo
+            .git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        assert_ne!(head_before, head_after, "commit should advance HEAD");
+
+        // Undo should move HEAD back
+        repo.undo().unwrap();
+        let head_after_undo = repo
+            .git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        assert_eq!(
+            head_before, head_after_undo,
+            "undo should restore previous HEAD"
+        );
+    }
+
+    #[test]
+    fn test_revert_creates_new_commit() {
+        let (repo, dir) = setup_test_repo("revert");
+
+        // Create a second commit
+        fs::write(dir.join("file.txt"), "second\n").unwrap();
+        repo.stage("file.txt").unwrap();
+        repo.git_cmd(&["commit", "-m", "second"]).unwrap();
+        let head_second = repo
+            .git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Revert the second commit
+        repo.revert(&head_second).unwrap();
+        let head_after_revert = repo
+            .git_cmd(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        assert_ne!(
+            head_second, head_after_revert,
+            "revert should create a new commit"
+        );
+
+        // File content should be back to initial state
+        let content = fs::read_to_string(dir.join("file.txt")).unwrap();
+        assert_eq!(content, "initial\n", "revert should restore file content");
     }
 }

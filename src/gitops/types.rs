@@ -30,6 +30,23 @@ pub struct CommitInfo {
     pub author_email: String,
     pub date: String,
     pub subject: String,
+    pub graph_prefix: String,
+    pub refs: String,  // e.g. "HEAD -> main, tag: v1.0"
+}
+
+impl Default for CommitInfo {
+    fn default() -> Self {
+        Self {
+            hash: String::new(),
+            short_hash: String::new(),
+            author_name: String::new(),
+            author_email: String::new(),
+            date: String::new(),
+            subject: String::new(),
+            graph_prefix: String::new(),
+            refs: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +73,14 @@ pub struct WorktreeInfo {
 pub enum RebaseState {
     Idle,
     InProgress { onto: String, done_count: usize, total_count: usize },
+}
+
+#[derive(Debug, Clone)]
+pub struct ReflogEntry {
+    pub hash: String,
+    pub short_hash: String,
+    pub action: String,
+    pub subject: String,
 }
 
 #[derive(Debug, Clone)]

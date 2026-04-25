@@ -204,6 +204,7 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("view_stash", "4", "Open stash/shelve panel", Some(Action::ShowStashPanel)),
             binding("view_remote", "R", "Open remotes panel", Some(Action::ShowRemotePanel)),
             binding("view_shelve", "W", "Open shelves panel", Some(Action::ShowShelvePanel)),
+            binding("undo", "Ctrl+z", "Undo last operation", Some(Action::Undo)),
         ],
         KeyContext::Main => vec![
             binding("stage", "s", "Stage selected file", Some(Action::Stage)),
@@ -236,6 +237,7 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
         KeyContext::Log => vec![
             binding("copy_hash", "y", "Copy commit hash", None),
             binding("cherry_pick", "c", "Cherry-pick commit", None),
+            binding("revert", "r", "Revert commit", None),  // hint-only; resolved in LogPanel
             binding("search", "/", "Search commits", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
