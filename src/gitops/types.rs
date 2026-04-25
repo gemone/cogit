@@ -83,6 +83,61 @@ pub struct ReflogEntry {
     pub subject: String,
 }
 
+/// Action type for a rebase todo entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RebaseAction {
+    Pick,
+    ReWord,
+    Edit,
+    Squash,
+    FixUp,
+    Drop,
+}
+
+impl RebaseAction {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "reword" | "r" => RebaseAction::ReWord,
+            "edit" | "e" => RebaseAction::Edit,
+            "squash" | "s" => RebaseAction::Squash,
+            "fixup" | "f" => RebaseAction::FixUp,
+            "drop" | "d" => RebaseAction::Drop,
+            _ => RebaseAction::Pick,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RebaseAction::Pick => "pick",
+            RebaseAction::ReWord => "reword",
+            RebaseAction::Edit => "edit",
+            RebaseAction::Squash => "squash",
+            RebaseAction::FixUp => "fixup",
+            RebaseAction::Drop => "drop",
+        }
+    }
+
+    pub fn short(&self) -> &'static str {
+        match self {
+            RebaseAction::Pick => "p",
+            RebaseAction::ReWord => "r",
+            RebaseAction::Edit => "e",
+            RebaseAction::Squash => "s",
+            RebaseAction::FixUp => "f",
+            RebaseAction::Drop => "d",
+        }
+    }
+}
+
+/// A single line in a rebase-todo sequence.
+#[derive(Debug, Clone)]
+pub struct RebaseTodo {
+    pub action: RebaseAction,
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct RemoteInfo {
     pub name: String,

@@ -1,6 +1,7 @@
 pub mod branch_panel;
 pub mod filelist_panel;
 pub mod log_panel;
+pub mod rebase_panel;
 pub mod remote_panel;
 pub mod shelve_panel;
 pub mod stash_panel;
@@ -95,6 +96,8 @@ pub enum Action {
     SetKeymapPreset(crate::config::KeymapPreset),
     Undo,
     Revert(String),
+    ExecuteRebase(String, Vec<crate::gitops::types::RebaseTodo>),
+    StartRebase(String),
 }
 
 pub trait Panel {
