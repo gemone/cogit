@@ -19,7 +19,8 @@ use std::path::Path;
 use crate::gitops::Repository;
 use crate::gitops::shell::{MergePreview, MergeStrategy};
 use crate::panels::{
-    Action, Panel, branch_panel::BranchPanel, filelist_panel::FileListPanel, log_panel::LogPanel,
+    Action, Panel, branch_panel::BranchPanel, console_panel::ConsolePanel,
+    filelist_panel::FileListPanel, log_panel::LogPanel,
     rebase_panel, remote_panel, shelve_panel::ShelvePanel, stash_panel::StashPanel,
 };
 use crate::config::{ConfigFile, KeymapPreset};
@@ -40,6 +41,7 @@ pub enum View {
     Remote,
     Shelve,
     Rebase,
+    Console,
 }
 
 pub struct App {
@@ -59,6 +61,7 @@ pub struct App {
     remote_panel: remote_panel::RemotePanel,
     shelve_panel: ShelvePanel,
     rebase_panel: rebase_panel::RebasePanel,
+    console_panel: ConsolePanel,
     // UI components
     cmdline: CmdLine,
     notifications: NotificationManager,
@@ -87,6 +90,7 @@ impl App {
         let remote_panel = remote_panel::RemotePanel::new(repo_path, &styles);
         let shelve_panel = ShelvePanel::new(repo_path, &styles);
         let rebase_panel = rebase_panel::RebasePanel::new();
+        let console_panel = ConsolePanel::new(repo_path, &styles);
         let cmdline = CmdLine::new(&styles);
         let notifications = NotificationManager::new();
         let help_overlay = HelpOverlay::new(&styles);
@@ -107,6 +111,7 @@ impl App {
             remote_panel,
             shelve_panel,
             rebase_panel,
+            console_panel,
             cmdline,
             notifications,
             diff_popup: None,
@@ -489,6 +494,9 @@ impl App {
                     self.dispatch(action);
                 }
             }
+            View::Console => {
+                self.console_panel.handle_key(key);
+            }
         }
     }
 
@@ -741,6 +749,9 @@ impl App {
             View::Rebase => {
                 self.rebase_panel.focus();
             }
+            View::Console => {
+                self.console_panel.focus();
+            }
             View::Shelve => {
                 self.shelve_panel.focus();
             }
@@ -771,6 +782,10 @@ impl App {
             Action::ShowLogPanel => {
                 self.switch_view(View::Log);
             }
+            Action::ShowConsolePanel => {
+                self.console_panel.refresh();
+                self.switch_view(View::Console);
+            }
             Action::ShowStashPanel => {
                 self.switch_view(View::Stash);
             }
@@ -798,6 +813,7 @@ impl App {
                     self.notifications
                         .notify_error(&format!("Stage all failed: {}", e));
                 } else {
+                    self.console_panel.record("Stage All", "", "ok");
                     self.notifications.notify("All files staged");
                     self.refresh_all();
                 }
@@ -810,6 +826,7 @@ impl App {
                     self.notifications
                         .notify_error(&format!("Unstage all failed: {}", e));
                 } else {
+                    self.console_panel.record("Unstage All", "", "ok");
                     self.notifications.notify("All files unstaged");
                     self.refresh_all();
                 }
@@ -828,6 +845,7 @@ impl App {
             }
             Action::Commit(msg) => match self.repo.commit(&msg) {
                 Ok(_) => {
+                    self.console_panel.record("Commit", &msg, "ok");
                     self.notifications.notify(&format!("Committed: {}", msg));
                     self.refresh_all();
                 }
@@ -837,6 +855,7 @@ impl App {
             },
             Action::WipCommit => match self.repo.wip_commit() {
                 Ok(_) => {
+                    self.console_panel.record("WIP Commit", "", "ok");
                     self.notifications.notify("WIP commit created");
                     self.refresh_all();
                 }
@@ -846,6 +865,7 @@ impl App {
             },
             Action::Reset(mode, path) => match self.repo.reset(&mode, &path) {
                 Ok(_) => {
+                    self.console_panel.record("Reset", &format!("{} {}", mode, path), "ok");
                     let msg = if path.is_empty() {
                         format!("Reset {} (whole repo)", mode)
                     } else {
@@ -864,6 +884,7 @@ impl App {
             }
             Action::AmendCommit => match self.repo.amend_commit(None) {
                 Ok(_) => {
+                    self.console_panel.record("Amend", "", "ok");
                     self.notifications.notify("Commit amended");
                     self.refresh_all();
                 }
@@ -909,6 +930,7 @@ impl App {
             }
             Action::PushCurrent => match self.repo.push_current() {
                 Ok(_) => {
+                    self.console_panel.record("Push", "current branch", "ok");
                     self.notifications.notify("Pushed successfully");
                     self.refresh_all();
                 }
@@ -919,6 +941,7 @@ impl App {
             },
             Action::FetchAll => match self.repo.fetch_all() {
                 Ok(_) => {
+                    self.console_panel.record("Fetch", "all remotes", "ok");
                     self.notifications.notify("Fetched all remotes");
                     self.refresh_all();
                 }
@@ -929,6 +952,7 @@ impl App {
             },
             Action::PullCurrent => match self.repo.pull_current() {
                 Ok(_) => {
+                    self.console_panel.record("Pull", "current branch", "ok");
                     self.notifications.notify("Pulled successfully");
                     self.refresh_all();
                 }
@@ -1112,6 +1136,7 @@ impl App {
             },
             Action::StashPop(index) => match self.repo.stash_pop(index) {
                 Ok(_) => {
+                    self.console_panel.record("Stash Pop", &format!("#{}", index), "ok");
                     self.notifications
                         .notify(&format!("Stash@{} popped", index));
                     self.refresh_all();
@@ -1297,6 +1322,7 @@ impl App {
             Action::PullRebase => {
                 match self.repo.pull_rebase_current() {
                     Ok(_) => {
+                        self.console_panel.record("Pull Rebase", "", "ok");
                         self.notifications.notify("Pulled with rebase successfully");
                         self.refresh_all();
                     }
@@ -1353,6 +1379,7 @@ impl App {
             Action::Undo => {
                 match self.repo.undo() {
                     Ok(msg) => {
+                        self.console_panel.record("Undo", &msg, "ok");
                         self.notifications.notify(&format!("Undo: {}", msg));
                         self.refresh_all();
                     }
@@ -1364,6 +1391,7 @@ impl App {
             Action::Revert(hash) => {
                 match self.repo.revert(&hash) {
                     Ok(_) => {
+                        self.console_panel.record("Revert", &hash[..7.min(hash.len())], "ok");
                         self.notifications.notify(&format!("Reverted {}", &hash[..7.min(hash.len())]));
                         self.refresh_all();
                     }
@@ -1464,6 +1492,7 @@ impl App {
                 self.notifications
                     .notify_error(&format!("Stage failed: {}", e));
             } else {
+                self.console_panel.record("Stage", &file.path, "ok");
                 self.notifications.notify(&format!("Staged: {}", file.path));
                 self.refresh_all();
             }
@@ -1491,6 +1520,7 @@ impl App {
                 self.notifications
                     .notify_error(&format!("Discard failed: {}", e));
             } else {
+                self.console_panel.record("Discard", &file.path, "ok");
                 self.notifications
                     .notify(&format!("Discarded: {}", file.path));
                 self.refresh_all();
@@ -1539,19 +1569,21 @@ impl App {
             View::Stash => View::Remote,
             View::Remote => View::Shelve,
             View::Shelve => View::Rebase,
-            View::Rebase => View::Main,
+            View::Rebase => View::Console,
+            View::Console => View::Main,
         }
     }
 
     fn prev_view(view: &View) -> View {
         match view {
-            View::Main => View::Shelve,
-            View::Branches => View::Main,
-            View::Log => View::Branches,
-            View::Stash => View::Log,
-            View::Remote => View::Stash,
+            View::Main => View::Console,
+            View::Console => View::Rebase,
             View::Rebase => View::Shelve,
             View::Shelve => View::Remote,
+            View::Remote => View::Stash,
+            View::Stash => View::Log,
+            View::Log => View::Branches,
+            View::Branches => View::Main,
         }
     }
 
@@ -1589,6 +1621,7 @@ impl App {
             View::Remote => self.remote_panel.render(f, view_area),
             View::Rebase => self.rebase_panel.render(f, view_area),
             View::Shelve => self.shelve_panel.render(f, view_area),
+            View::Console => self.console_panel.render(f, view_area),
         }
 
         // Command line at bottom
