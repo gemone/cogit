@@ -303,8 +303,10 @@ impl Repository {
 
     pub fn undo(&self) -> Result<String> {
         // Reset to previous reflog entry, keeping working tree intact
-        let output = self.git_cmd(&["reset", "--keep", "HEAD@{1}"])?;
-        Ok(output.trim().to_string())
+        self.git_cmd(&["reset", "--keep", "HEAD@{1}"])?;
+        // Return the new HEAD short hash for meaningful notification
+        let head = self.git_cmd(&["rev-parse", "--short", "HEAD"])?;
+        Ok(head.trim().to_string())
     }
 
     pub fn revert(&self, hash: &str) -> Result<String> {
@@ -316,11 +318,12 @@ impl Repository {
         let output = self.git_cmd(&[
             "reflog",
             &format!("-{}", count),
-            "--pretty=format:%H|%h|%gs|%s",
+            "--pretty=format:%x1f%H%x1f%h%x1f%gs%x1f%s",
         ])?;
         let mut entries = Vec::new();
+        let sep = '\u{1f}';
         for line in output.lines() {
-            let parts: Vec<&str> = line.splitn(4, '|').collect();
+            let parts: Vec<&str> = line.splitn(4, sep).collect();
             if parts.len() == 4 {
                 entries.push(ReflogEntry {
                     hash: parts[0].to_string(),

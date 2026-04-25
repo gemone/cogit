@@ -89,7 +89,10 @@ impl LogPanel {
 
     fn selected_hash(&self) -> Option<String> {
         let i = self.state.selected().unwrap_or(0);
-        self.commits.get(i).map(|c| c.hash.clone())
+        self.commits
+            .get(i)
+            .filter(|c| !c.hash.is_empty())
+            .map(|c| c.hash.clone())
     }
 }
 
