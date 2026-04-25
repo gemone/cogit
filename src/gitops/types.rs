@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Default)]
 pub struct FileStatus {
     pub branch: String,
@@ -195,5 +197,28 @@ impl FileStatus {
             }
         }
         status
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationEntry {
+    pub timestamp: String,
+    pub action: String,
+    pub detail: String,
+    pub result: String,
+}
+
+impl OperationEntry {
+    pub fn new(action: &str, detail: &str, result: &str) -> Self {
+        Self {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            action: action.to_string(),
+            detail: detail.to_string(),
+            result: result.to_string(),
+        }
+    }
+
+    pub fn is_ok(&self) -> bool {
+        self.result == "ok"
     }
 }

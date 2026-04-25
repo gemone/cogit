@@ -142,6 +142,7 @@ fn section_title(view: &View) -> &'static str {
         View::Remote => "Remote",
         View::Shelve => "Shelve",
         View::Rebase => "Rebase",
+        View::Console => "Console",
     }
 }
 
@@ -154,5 +155,6 @@ fn section_context(view: &View) -> KeyContext {
         View::Stash => KeyContext::Stash,
         View::Remote => KeyContext::Remote,
         View::Shelve => KeyContext::Shelve,
+        View::Console => KeyContext::Global,
     }
 }
