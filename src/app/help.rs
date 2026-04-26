@@ -4,10 +4,16 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::Paragraph,
 };
 
-use crate::app::styles::Styles;
+use crate::app::{
+    popup::{
+        centered_popup_area, popup_block, popup_inner_area_without_footer, popup_style,
+        render_popup_background,
+    },
+    styles::Styles,
+};
 use crate::{
     app::{
         View,
@@ -69,30 +75,14 @@ impl HelpOverlay {
             return;
         }
 
-        let popup_w = (area.width.saturating_mul(4) / 5).max(60);
-        let popup_h = (area.height.saturating_mul(4) / 5).max(18);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+        let popup_area = centered_popup_area(area, 4, 5, 60, 4, 5, 18);
+        render_popup_background(f, popup_area);
 
-        f.render_widget(Clear, popup_area);
-
-        let clear = Block::default().style(Style::default().bg(Color::Black).fg(Color::White));
-        f.render_widget(clear, popup_area);
-
-        let border = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Which Key — {} ", keymap.preset_name()))
-            .border_style(self.styles.border_active)
-            .style(Style::default().bg(Color::Black).fg(Color::White));
+        let title = format!(" Which Key — {} ", keymap.preset_name());
+        let border = popup_block(title.as_str(), self.styles.border_active);
         f.render_widget(border, popup_area);
 
-        let inner = Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(2),
-        };
+        let inner = popup_inner_area_without_footer(popup_area);
 
         let mut lines = Vec::new();
         lines.push(Line::from(vec![Span::styled(
@@ -133,7 +123,7 @@ impl HelpOverlay {
         }
 
         let paragraph = Paragraph::new(lines)
-            .style(self.styles.text_primary.bg(Color::Black))
+            .style(popup_style().fg(self.styles.text_primary.fg.unwrap_or(Color::White)))
             .scroll((self.scroll, 0));
         f.render_widget(paragraph, inner);
     }
@@ -147,7 +137,7 @@ mod tests {
         config::CogitConfig,
         vimkeys::Mode,
     };
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, widgets::Block};
 
     #[test]
     fn help_overlay_clears_background_before_rendering() {

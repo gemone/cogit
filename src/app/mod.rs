@@ -4,6 +4,7 @@ pub mod keymap;
 pub mod layout;
 pub mod navigation;
 pub mod notification;
+pub mod popup;
 pub mod styles;
 
 use anyhow::Result;
@@ -13,7 +14,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Paragraph},
 };
 use std::path::Path;
 
@@ -32,6 +33,9 @@ use crate::vimkeys::Mode;
 use self::cmdline::CmdLine;
 use self::help::HelpOverlay;
 use self::notification::NotificationManager;
+use self::popup::{
+    centered_popup_area, popup_block, popup_inner_area, popup_style, render_popup_background,
+};
 use self::styles::Styles;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1964,27 +1968,9 @@ impl App {
     }
 
     fn draw_diff_popup(&self, f: &mut Frame, area: Rect, path: &str, content: &str, scroll: u16) {
-        // Centered popup: 80% width, 80% height
-        let popup_w = (area.width * 4 / 5).max(40);
-        let popup_h = (area.height * 4 / 5).max(10);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        // Clear background
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
-        let inner = Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(3),
-        };
+        let popup_area = centered_popup_area(area, 4, 5, 40, 4, 5, 10);
+        render_popup_background(f, popup_area);
+        let inner = popup_inner_area(popup_area);
 
         // Color diff lines
         let lines: Vec<Line> = content
@@ -2005,12 +1991,11 @@ impl App {
 
         let title = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", path);
         let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(ratatui::style::Color::Yellow)),
-            )
+            .style(popup_style())
+            .block(popup_block(
+                title.as_str(),
+                Style::default().fg(ratatui::style::Color::Yellow),
+            ))
             .scroll((scroll, 0));
 
         f.render_widget(paragraph, inner);
@@ -2359,10 +2344,7 @@ impl App {
         border_color: ratatui::style::Color,
         lines: Vec<Line>,
     ) -> Rect {
-        let popup_w = (area.width * 3 / 5).max(40);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+        let popup_area = centered_popup_area(area, 3, 5, 40, popup_h, area.height.max(1), popup_h);
 
         render_popup_background(f, popup_area);
 
@@ -2430,25 +2412,9 @@ impl App {
         content: &str,
         scroll: &u16,
     ) {
-        let popup_w = (area.width * 4 / 5).max(40);
-        let popup_h = (area.height * 4 / 5).max(10);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
-        let inner = Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(3),
-        };
+        let popup_area = centered_popup_area(area, 4, 5, 40, 4, 5, 10);
+        render_popup_background(f, popup_area);
+        let inner = popup_inner_area(popup_area);
 
         // Color diff lines
         let lines: Vec<Line> = content
@@ -2469,37 +2435,20 @@ impl App {
 
         let title_str = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", title);
         let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title_str.as_str())
-                    .border_style(Style::default().fg(ratatui::style::Color::Yellow)),
-            )
+            .style(popup_style())
+            .block(popup_block(
+                title_str.as_str(),
+                Style::default().fg(ratatui::style::Color::Yellow),
+            ))
             .scroll(((*scroll), 0));
 
         f.render_widget(paragraph, inner);
     }
 
     fn draw_gitignore_popup(&self, f: &mut Frame, area: Rect, content: &str, scroll: &u16) {
-        let popup_w = (area.width * 4 / 5).max(40);
-        let popup_h = (area.height * 4 / 5).max(10);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
-        let inner = Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(3),
-        };
+        let popup_area = centered_popup_area(area, 4, 5, 40, 4, 5, 10);
+        render_popup_background(f, popup_area);
+        let inner = popup_inner_area(popup_area);
 
         let lines: Vec<Line> = content
             .lines()
@@ -2515,26 +2464,15 @@ impl App {
             .collect();
 
         let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" .gitignore (j/k:scroll G/g:jump PgUp/PgDn) ")
-                    .border_style(Style::default().fg(ratatui::style::Color::Green)),
-            )
+            .style(popup_style())
+            .block(popup_block(
+                " .gitignore (j/k:scroll G/g:jump PgUp/PgDn) ",
+                Style::default().fg(ratatui::style::Color::Green),
+            ))
             .scroll(((*scroll), 0));
 
         f.render_widget(paragraph, inner);
     }
-}
-
-fn render_popup_background(f: &mut Frame, popup_area: Rect) {
-    f.render_widget(Clear, popup_area);
-    let clear = Block::default().style(
-        Style::default()
-            .bg(ratatui::style::Color::Black)
-            .fg(ratatui::style::Color::White),
-    );
-    f.render_widget(clear, popup_area);
 }
 
 fn input_dialog_widget<'a>(
@@ -2543,29 +2481,31 @@ fn input_dialog_widget<'a>(
     lines: Vec<Line<'a>>,
 ) -> Paragraph<'a> {
     Paragraph::new(lines)
-        .style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(border_color))
-                .style(
-                    Style::default()
-                        .bg(ratatui::style::Color::Black)
-                        .fg(ratatui::style::Color::White),
-                ),
-        )
+        .style(popup_style())
+        .block(popup_block(title, Style::default().fg(border_color)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::CogitConfig;
+    use crate::{config::CogitConfig, gitops::Repository};
     use ratatui::{Terminal, backend::TestBackend};
+    use std::fs;
+
+    fn setup_test_repo(dir_name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("cogit-test-app-popup-{}", dir_name));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let repo = Repository::open(&dir).unwrap();
+        repo.git_cmd(&["init", "-b", "main"]).unwrap();
+        repo.git_cmd(&["config", "user.name", "Test"]).unwrap();
+        repo.git_cmd(&["config", "user.email", "test@test.com"])
+            .unwrap();
+        fs::write(dir.join("file.txt"), "initial\n").unwrap();
+        repo.git_cmd(&["add", "."]).unwrap();
+        repo.git_cmd(&["commit", "-m", "initial"]).unwrap();
+        dir
+    }
 
     #[test]
     fn pane_and_view_roundtrip() {
@@ -2679,7 +2619,7 @@ mod tests {
                 f.render_widget(background, area);
 
                 let popup_area = Rect::new(20, 10, 40, 8);
-                render_popup_background(f, popup_area);
+                super::popup::render_popup_background(f, popup_area);
                 let paragraph = input_dialog_widget(
                     " Commit ",
                     ratatui::style::Color::Green,
@@ -2691,6 +2631,56 @@ mod tests {
 
         let buffer = terminal.backend().buffer().clone();
         assert_eq!(buffer[(30, 12)].bg, ratatui::style::Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, ratatui::style::Color::Red);
+    }
+
+    #[test]
+    fn diff_popup_clears_background_before_rendering() {
+        let repo_dir = setup_test_repo("diff");
+        let app = App::new(&repo_dir).unwrap();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(
+                    Style::default()
+                        .bg(ratatui::style::Color::Red)
+                        .fg(ratatui::style::Color::White),
+                );
+                f.render_widget(background, area);
+                app.draw_diff_popup(f, area, "file.txt", "@@\n+added line", 0);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(40, 12)].bg, ratatui::style::Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, ratatui::style::Color::Red);
+    }
+
+    #[test]
+    fn gitignore_popup_clears_background_before_rendering() {
+        let repo_dir = setup_test_repo("gitignore");
+        let app = App::new(&repo_dir).unwrap();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(
+                    Style::default()
+                        .bg(ratatui::style::Color::Red)
+                        .fg(ratatui::style::Color::White),
+                );
+                f.render_widget(background, area);
+                app.draw_gitignore_popup(f, area, "# comment\ntarget/", &0);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(40, 12)].bg, ratatui::style::Color::Black);
         assert_eq!(buffer[(2, 2)].bg, ratatui::style::Color::Red);
     }
 }

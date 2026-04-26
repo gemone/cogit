@@ -9,8 +9,13 @@ use ratatui::{
 use std::any::Any;
 
 use super::{Action, Panel, format_panel_title, format_section_title};
-use crate::app::navigation::handle_list_navigation;
-use crate::app::styles::Styles;
+use crate::app::{
+    navigation::handle_list_navigation,
+    popup::{
+        centered_popup_area, popup_block, popup_inner_area, popup_style, render_popup_background,
+    },
+    styles::Styles,
+};
 use crate::gitops::Repository;
 use crate::gitops::shelve::ShelveEntry;
 
@@ -283,25 +288,9 @@ impl Panel for ShelvePanel {
 
 impl ShelvePanel {
     fn render_diff_popup(&self, f: &mut Frame, area: Rect, content: &str, scroll: u16) {
-        let popup_w = (area.width * 4 / 5).max(40);
-        let popup_h = (area.height * 4 / 5).max(10);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = ratatui::layout::Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        let clear = Block::default().style(
-            ratatui::style::Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
-        let inner = ratatui::layout::Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(3),
-        };
+        let popup_area = centered_popup_area(area, 4, 5, 40, 4, 5, 10);
+        render_popup_background(f, popup_area);
+        let inner = popup_inner_area(popup_area);
 
         // Color diff lines
         let lines: Vec<Line> = content
@@ -320,15 +309,61 @@ impl ShelvePanel {
             })
             .collect();
 
+        let title = format_section_title("Shelve Diff (Esc/q:close j/k:scroll)");
         let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format_section_title("Shelve Diff (Esc/q:close j/k:scroll)"))
-                    .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Cyan)),
-            )
+            .style(popup_style())
+            .block(popup_block(
+                title.as_str(),
+                ratatui::style::Style::default().fg(ratatui::style::Color::Cyan),
+            ))
             .scroll((scroll, 0));
 
         f.render_widget(paragraph, inner);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        style::{Color, Style},
+        widgets::Block,
+    };
+
+    fn test_panel() -> ShelvePanel {
+        ShelvePanel {
+            repo: std::path::PathBuf::new(),
+            focused: false,
+            state: ListState::default(),
+            entries: Vec::new(),
+            styles: Styles::default(),
+            input_mode: false,
+            input_buffer: String::new(),
+            input_prompt: String::new(),
+            include_staged: false,
+            diff_popup: None,
+        }
+    }
+
+    #[test]
+    fn shelve_diff_popup_clears_background_before_rendering() {
+        let panel = test_panel();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(Style::default().bg(Color::Red));
+                f.render_widget(background, area);
+                panel.render_diff_popup(f, area, "@@\n+added line", 0);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(40, 12)].bg, Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, Color::Red);
     }
 }
