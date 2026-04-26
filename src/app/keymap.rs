@@ -302,6 +302,12 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
                 Some(Action::SaveLayoutGlobal),
             ),
             binding(
+                "view_files",
+                "0",
+                "Focus files pane",
+                Some(Action::ShowFilesPanel),
+            ),
+            binding(
                 "view_branches",
                 "1",
                 "Focus branches pane",
@@ -324,6 +330,12 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
                 "4",
                 "Focus stash/shelve pane",
                 Some(Action::ShowStashPanel),
+            ),
+            binding(
+                "view_rebase",
+                "5",
+                "Focus rebase pane",
+                Some(Action::ShowRebasePanel),
             ),
             binding(
                 "view_remote",
@@ -546,6 +558,12 @@ fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
                 Some(Action::SaveLayoutGlobal),
             ),
             binding(
+                "view_files",
+                "0",
+                "Focus files pane",
+                Some(Action::ShowFilesPanel),
+            ),
+            binding(
                 "view_branches",
                 "1",
                 "Focus branches pane",
@@ -568,6 +586,12 @@ fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
                 "4",
                 "Focus stash/shelve pane",
                 Some(Action::ShowStashPanel),
+            ),
+            binding(
+                "view_rebase",
+                "5",
+                "Focus rebase pane",
+                Some(Action::ShowRebasePanel),
             ),
             binding(
                 "view_remote",
@@ -784,10 +808,26 @@ mod tests {
     }
 
     #[test]
+    fn vim_global_0_opens_files_panel() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('0'))),
+            Some(Action::ShowFilesPanel)
+        ));
+    }
+
+    #[test]
     fn vim_global_3_opens_console_panel() {
         assert!(matches!(
             vim_km().resolve(KeyContext::Global, key(KeyCode::Char('3'))),
             Some(Action::ShowConsolePanel)
+        ));
+    }
+
+    #[test]
+    fn vim_global_5_opens_rebase_panel() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('5'))),
+            Some(Action::ShowRebasePanel)
         ));
     }
 
@@ -814,10 +854,26 @@ mod tests {
     }
 
     #[test]
+    fn helix_global_0_opens_files_panel() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('0'))),
+            Some(Action::ShowFilesPanel)
+        ));
+    }
+
+    #[test]
     fn helix_global_3_opens_console_panel() {
         assert!(matches!(
             helix_km().resolve(KeyContext::Global, key(KeyCode::Char('3'))),
             Some(Action::ShowConsolePanel)
+        ));
+    }
+
+    #[test]
+    fn helix_global_5_opens_rebase_panel() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('5'))),
+            Some(Action::ShowRebasePanel)
         ));
     }
 

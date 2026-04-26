@@ -829,6 +829,9 @@ impl App {
                 self.layout.prev_pane();
                 self.switch_view(Self::view_for_pane(self.layout.active_pane()));
             }
+            Action::ShowFilesPanel => {
+                self.switch_view(View::Main);
+            }
             Action::ShowBranchPanel => {
                 self.switch_view(View::Branches);
             }
@@ -844,6 +847,9 @@ impl App {
             }
             Action::ShowRemotePanel => {
                 self.switch_view(View::Remote);
+            }
+            Action::ShowRebasePanel => {
+                self.switch_view(View::Rebase);
             }
             Action::ShowShelvePanel => {
                 self.switch_view(View::Shelve);
@@ -1918,11 +1924,12 @@ impl App {
 
     fn pane_jump_key(keymap: &KeymapManager, pane: PaneId) -> Option<String> {
         let action_id = match pane {
-            PaneId::Files | PaneId::Rebase => return None,
+            PaneId::Files => "view_files",
             PaneId::Branches => "view_branches",
             PaneId::Log => "view_log",
             PaneId::Console => "view_console",
             PaneId::Stash => "view_stash",
+            PaneId::Rebase => "view_rebase",
             PaneId::Remote => "view_remote",
             PaneId::Shelve => "view_shelve",
         };
@@ -2571,11 +2578,21 @@ mod tests {
     #[test]
     fn pane_jump_keys_follow_global_keymap_overrides() {
         let keymap = KeymapManager::new(&CogitConfig::default());
+        keymap.override_binding(KeyContext::Global, "view_files", "F".to_string());
         keymap.override_binding(KeyContext::Global, "view_branches", "9".to_string());
+        keymap.override_binding(KeyContext::Global, "view_rebase", "B".to_string());
 
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Files).as_deref(),
+            Some("F")
+        );
         assert_eq!(
             App::pane_jump_key(&keymap, PaneId::Branches).as_deref(),
             Some("9")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Rebase).as_deref(),
+            Some("B")
         );
         assert_eq!(
             App::pane_jump_key(&keymap, PaneId::Remote).as_deref(),
@@ -2584,10 +2601,34 @@ mod tests {
     }
 
     #[test]
-    fn panes_without_direct_binding_have_no_jump_key() {
+    fn every_tiled_pane_has_a_jump_key() {
         let keymap = KeymapManager::new(&CogitConfig::default());
 
-        assert_eq!(App::pane_jump_key(&keymap, PaneId::Files), None);
-        assert_eq!(App::pane_jump_key(&keymap, PaneId::Rebase), None);
+        assert_eq!(App::pane_jump_key(&keymap, PaneId::Files).as_deref(), Some("0"));
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Branches).as_deref(),
+            Some("1")
+        );
+        assert_eq!(App::pane_jump_key(&keymap, PaneId::Log).as_deref(), Some("2"));
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Console).as_deref(),
+            Some("3")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Stash).as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Rebase).as_deref(),
+            Some("5")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Remote).as_deref(),
+            Some("R")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Shelve).as_deref(),
+            Some("W")
+        );
     }
 }
