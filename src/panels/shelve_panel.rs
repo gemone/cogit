@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel, format_panel_title};
+use super::{Action, Panel, format_panel_title, format_section_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
@@ -324,7 +324,7 @@ impl ShelvePanel {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Shelve Diff (Esc/q:close j/k:scroll) ")
+                    .title(format_section_title("Shelve Diff (Esc/q:close j/k:scroll)"))
                     .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Cyan)),
             )
             .scroll((scroll, 0));

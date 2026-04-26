@@ -128,6 +128,10 @@ pub fn format_panel_title(title: &str, shortcut: Option<&str>) -> String {
     }
 }
 
+pub fn format_section_title(title: &str) -> String {
+    format_panel_title(title, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +145,14 @@ mod tests {
     #[test]
     fn format_panel_title_keeps_plain_title_without_shortcut_hint() {
         assert_eq!(format_panel_title("Files", None), " Files ");
+    }
+
+    #[test]
+    fn format_section_title_uses_shared_plain_panel_style() {
+        assert_eq!(format_section_title("Detail"), " Detail ");
+        assert_eq!(
+            format_section_title("Shelve Diff (Esc/q:close j/k:scroll)"),
+            " Shelve Diff (Esc/q:close j/k:scroll) "
+        );
     }
 }

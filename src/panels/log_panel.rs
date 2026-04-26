@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel, format_panel_title};
+use super::{Action, Panel, format_panel_title, format_section_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
@@ -204,7 +204,7 @@ impl Panel for LogPanel {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Detail ")
+                    .title(format_section_title("Detail"))
                     .border_style(border_style),
             )
             .scroll((0, 0));
