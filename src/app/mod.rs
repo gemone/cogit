@@ -1703,12 +1703,12 @@ impl App {
         match pane {
             PaneId::Files => View::Main,
             PaneId::Branches => View::Branches,
+            PaneId::Stash => View::Stash,
             PaneId::Log => View::Log,
             PaneId::Rebase => View::Rebase,
-            PaneId::Console => View::Console,
-            PaneId::Stash => View::Stash,
             PaneId::Remote => View::Remote,
             PaneId::Shelve => View::Shelve,
+            PaneId::Console => View::Console,
         }
     }
 
@@ -1861,7 +1861,7 @@ impl App {
         let rects = self.layout.pane_rects(area);
         for pane in PaneId::ALL {
             let rect = rects[pane.index()];
-            if rect.width < 8 || rect.height < 3 {
+            if rect.width < 12 || rect.height < 4 {
                 continue;
             }
             self.render_pane(f, pane, rect);
