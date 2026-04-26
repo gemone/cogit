@@ -1834,7 +1834,7 @@ impl App {
         }
 
         let branch = self.repo.current_branch().unwrap_or_default();
-        let status_bar = Paragraph::new(Line::from(vec![
+        let mut spans = vec![
             Span::styled(
                 format!(" {} ", branch),
                 self.styles.addition.add_modifier(Modifier::BOLD),
@@ -1844,12 +1844,15 @@ impl App {
                 format!(" active:{} ", self.layout.active_label()),
                 self.styles.text_primary,
             ),
-            Span::styled(
-                " save:Alt+s local / Ctrl+g global / Ctrl+r reset ",
+        ];
+        if let Some(shortcuts) = Self::status_bar_layout_shortcuts(&self.keymap) {
+            spans.push(Span::styled(
+                format!(" {} ", shortcuts),
                 self.styles.text_secondary,
-            ),
-        ]))
-        .style(Style::default().bg(ratatui::style::Color::DarkGray));
+            ));
+        }
+        let status_bar = Paragraph::new(Line::from(spans))
+            .style(Style::default().bg(ratatui::style::Color::DarkGray));
         f.render_widget(status_bar, area);
     }
 
@@ -1888,6 +1891,29 @@ impl App {
         let help = Paragraph::new(format!(" {}", footer_parts.join("  ")))
             .style(self.styles.text_secondary);
         f.render_widget(help, area);
+    }
+
+    fn status_bar_layout_shortcuts(keymap: &KeymapManager) -> Option<String> {
+        let local = keymap.binding_key(KeyContext::Global, "save_layout_local");
+        let global = keymap.binding_key(KeyContext::Global, "save_layout_global");
+        let reset = keymap.binding_key(KeyContext::Global, "reset_layout");
+
+        let mut parts = Vec::new();
+        if let Some(local) = local {
+            parts.push(format!("save:{} local", local));
+        }
+        if let Some(global) = global {
+            if parts.is_empty() {
+                parts.push(format!("save:{} global", global));
+            } else {
+                parts.push(format!("{} global", global));
+            }
+        }
+        if let Some(reset) = reset {
+            parts.push(format!("{} reset", reset));
+        }
+
+        (!parts.is_empty()).then(|| parts.join(" / "))
     }
 
     fn render_pane(&mut self, f: &mut Frame, pane: PaneId, area: Rect) {
@@ -2493,11 +2519,38 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::CogitConfig;
 
     #[test]
     fn pane_and_view_roundtrip() {
         for pane in PaneId::ALL {
             assert_eq!(App::pane_for_view(&App::view_for_pane(pane)), pane);
         }
+    }
+
+    #[test]
+    fn status_bar_shortcuts_follow_global_keymap_overrides() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        keymap.override_binding(
+            KeyContext::Global,
+            "save_layout_local",
+            "Ctrl+s".to_string(),
+        );
+
+        assert_eq!(
+            App::status_bar_layout_shortcuts(&keymap).as_deref(),
+            Some("save:Ctrl+s local / Ctrl+g global / Ctrl+r reset")
+        );
+    }
+
+    #[test]
+    fn status_bar_shortcuts_keep_remaining_bindings_when_one_is_missing() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        keymap.remove_binding_for_test(KeyContext::Global, "save_layout_local");
+
+        assert_eq!(
+            App::status_bar_layout_shortcuts(&keymap).as_deref(),
+            Some("save:Ctrl+g global / Ctrl+r reset")
+        );
     }
 }

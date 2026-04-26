@@ -127,8 +127,9 @@ impl LayoutState {
         match repo.git_config_get("cogit.layout") {
             Ok(Some(raw)) => parse_local_layout(&raw)
                 .map(Into::into)
-                .unwrap_or_else(|| defaults.clone().into()),
-            _ => defaults.clone().into(),
+                .map(Self::normalized)
+                .unwrap_or_else(|| Self::from(defaults.clone()).normalized()),
+            _ => Self::from(defaults.clone()).normalized(),
         }
     }
 
@@ -138,6 +139,16 @@ impl LayoutState {
 
     pub fn active_label(&self) -> &'static str {
         self.active_pane().label()
+    }
+
+    pub fn normalized(mut self) -> Self {
+        self.active_index %= PaneId::ALL.len();
+        normalize_weights(&mut self.vertical, MIN_VERTICAL_WEIGHT);
+        normalize_weights(&mut self.columns, MIN_COLUMN_WEIGHT);
+        normalize_weights(&mut self.left_rows, MIN_STACK_WEIGHT);
+        normalize_weights(&mut self.center_rows, MIN_STACK_WEIGHT);
+        normalize_weights(&mut self.right_rows, MIN_STACK_WEIGHT);
+        self
     }
 
     pub fn set_active(&mut self, pane: PaneId) {
@@ -277,6 +288,67 @@ fn parse_local_layout(raw: &str) -> Option<LayoutConfig> {
         .ok()
 }
 
+fn normalize_weights<const N: usize>(weights: &mut [u16; N], min_weight: u16) {
+    if N == 0 {
+        return;
+    }
+
+    let total = 100u32;
+    let slots = N as u32;
+    let min_weight_u32 = u32::from(min_weight);
+    if min_weight_u32.saturating_mul(slots) > total {
+        let base = (total / slots) as u16;
+        let mut fallback = [0u16; N];
+        fallback.fill(base);
+        for weight in fallback.iter_mut().take((total % slots) as usize) {
+            *weight += 1;
+        }
+        *weights = fallback;
+        return;
+    }
+
+    let mut normalized = *weights;
+    for weight in &mut normalized {
+        *weight = (*weight).max(min_weight);
+    }
+
+    let mut sum: u32 = normalized.iter().map(|&weight| u32::from(weight)).sum();
+    if sum == total {
+        *weights = normalized;
+        return;
+    }
+
+    if sum < total {
+        normalized[0] = normalized[0].saturating_add((total - sum) as u16);
+        *weights = normalized;
+        return;
+    }
+
+    let mut excess = sum - total;
+    while excess > 0 {
+        let mut changed = false;
+        for weight in &mut normalized {
+            if excess == 0 {
+                break;
+            }
+            if *weight > min_weight {
+                *weight -= 1;
+                excess -= 1;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    sum = normalized.iter().map(|&weight| u32::from(weight)).sum();
+    if sum < total {
+        normalized[0] = normalized[0].saturating_add((total - sum) as u16);
+    }
+    *weights = normalized;
+}
+
 fn adjust_stack<const N: usize>(weights: &mut [u16; N], index: usize, delta: i16) {
     if N < 2 {
         return;
@@ -397,6 +469,75 @@ mod tests {
             layout.vertical.iter().sum::<u16>(),
             before.iter().sum::<u16>()
         );
+    }
+
+    #[test]
+    fn normalizes_out_of_range_layout_state() {
+        let layout = LayoutState {
+            active_index: PaneId::ALL.len() + 3,
+            vertical: [0, 0],
+            columns: [99, 1, 0],
+            left_rows: [0, 0, 100],
+            center_rows: [100, 0],
+            right_rows: [1, 99],
+        }
+        .normalized();
+
+        assert_eq!(layout.active_pane(), PaneId::Log);
+        assert_eq!(layout.vertical.iter().sum::<u16>(), 100);
+        assert_eq!(layout.columns.iter().sum::<u16>(), 100);
+        assert_eq!(layout.left_rows.iter().sum::<u16>(), 100);
+        assert_eq!(layout.center_rows.iter().sum::<u16>(), 100);
+        assert_eq!(layout.right_rows.iter().sum::<u16>(), 100);
+        assert!(
+            layout
+                .vertical
+                .iter()
+                .all(|&weight| weight >= MIN_VERTICAL_WEIGHT)
+        );
+        assert!(
+            layout
+                .columns
+                .iter()
+                .all(|&weight| weight >= MIN_COLUMN_WEIGHT)
+        );
+        assert!(
+            layout
+                .left_rows
+                .iter()
+                .all(|&weight| weight >= MIN_STACK_WEIGHT)
+        );
+        assert!(
+            layout
+                .center_rows
+                .iter()
+                .all(|&weight| weight >= MIN_STACK_WEIGHT)
+        );
+        assert!(
+            layout
+                .right_rows
+                .iter()
+                .all(|&weight| weight >= MIN_STACK_WEIGHT)
+        );
+    }
+
+    #[test]
+    fn normalizes_extreme_layout_weights_without_overflow() {
+        let layout = LayoutState {
+            active_index: 0,
+            vertical: [u16::MAX, u16::MAX],
+            columns: [u16::MAX, u16::MAX, u16::MAX],
+            left_rows: [u16::MAX, u16::MAX, u16::MAX],
+            center_rows: [u16::MAX, u16::MAX],
+            right_rows: [u16::MAX, u16::MAX],
+        }
+        .normalized();
+
+        assert_eq!(layout.vertical.iter().sum::<u16>(), 100);
+        assert_eq!(layout.columns.iter().sum::<u16>(), 100);
+        assert_eq!(layout.left_rows.iter().sum::<u16>(), 100);
+        assert_eq!(layout.center_rows.iter().sum::<u16>(), 100);
+        assert_eq!(layout.right_rows.iter().sum::<u16>(), 100);
     }
 
     #[test]

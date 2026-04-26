@@ -174,6 +174,26 @@ impl KeymapManager {
             .unwrap_or_default()
     }
 
+    pub fn binding_key(&self, context: KeyContext, action_id: &str) -> Option<String> {
+        let state = self.state.read().expect("keymap lock poisoned");
+        state
+            .cache
+            .get(&context)
+            .and_then(|ctx| ctx.specs.iter().find(|spec| spec.id == action_id))
+            .map(|spec| spec.key.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_binding_for_test(&self, context: KeyContext, action_id: &str) {
+        let mut state = self.state.write().expect("keymap lock poisoned");
+        if let Some(ctx) = state.cache.get_mut(&context) {
+            if let Some(index) = ctx.specs.iter().position(|spec| spec.id == action_id) {
+                let spec = ctx.specs.remove(index);
+                ctx.lookup.remove(&spec.key);
+            }
+        }
+    }
+
     pub fn override_binding(&self, context: KeyContext, action_id: &str, key: String) {
         let mut state = self.state.write().expect("keymap lock poisoned");
         if let Some(k) = context.override_key() {

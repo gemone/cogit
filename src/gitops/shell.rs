@@ -510,7 +510,7 @@ impl Repository {
 
     pub fn git_config_set(&self, key: &str, value: &str) -> Result<()> {
         let output = std::process::Command::new("git")
-            .args(["config", "--local", key, value])
+            .args(["config", "--local", "--replace-all", key, value])
             .current_dir(&self.path)
             .output()?;
         if !output.status.success() {
@@ -522,7 +522,7 @@ impl Repository {
 
     pub fn git_config_unset(&self, key: &str) -> Result<()> {
         let output = std::process::Command::new("git")
-            .args(["config", "--local", "--unset", key])
+            .args(["config", "--local", "--unset-all", key])
             .current_dir(&self.path)
             .output()?;
         if output.status.success() {
@@ -986,6 +986,36 @@ mod tests {
     fn test_git_config_unset_missing_key_is_ok() {
         let (repo, _dir) = setup_test_repo("unset-missing-key");
         repo.git_config_unset("cogit.layout").unwrap();
+    }
+
+    #[test]
+    fn test_git_config_set_replaces_existing_values() {
+        let (repo, _dir) = setup_test_repo("replace-config-values");
+        repo.git_cmd(&["config", "--local", "--add", "cogit.layout", "first"])
+            .unwrap();
+        repo.git_cmd(&["config", "--local", "--add", "cogit.layout", "second"])
+            .unwrap();
+
+        repo.git_config_set("cogit.layout", "normalized").unwrap();
+
+        let values = repo
+            .git_cmd(&["config", "--local", "--get-all", "cogit.layout"])
+            .unwrap();
+        assert_eq!(values.lines().collect::<Vec<_>>(), vec!["normalized"]);
+    }
+
+    #[test]
+    fn test_git_config_unset_removes_all_values() {
+        let (repo, _dir) = setup_test_repo("unset-all-config-values");
+        repo.git_cmd(&["config", "--local", "--add", "cogit.layout", "first"])
+            .unwrap();
+        repo.git_cmd(&["config", "--local", "--add", "cogit.layout", "second"])
+            .unwrap();
+
+        repo.git_config_unset("cogit.layout").unwrap();
+
+        let values = repo.git_config_get("cogit.layout").unwrap();
+        assert!(values.is_none());
     }
 
     #[test]
