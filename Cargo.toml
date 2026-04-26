@@ -10,5 +10,7 @@ gix = { version = "0.70", features = ["max-performance"] }
 anyhow = "1"
 arboard = "3.3"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
 toml = "0.8"
 directories = "5"

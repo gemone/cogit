@@ -1,4 +1,5 @@
 pub mod branch_panel;
+pub mod console_panel;
 pub mod filelist_panel;
 pub mod log_panel;
 pub mod rebase_panel;
@@ -98,6 +99,7 @@ pub enum Action {
     Revert(String),
     ExecuteRebase(String, Vec<crate::gitops::types::RebaseTodo>),
     StartRebase(String),
+    ShowConsolePanel,
 }
 
 pub trait Panel {
