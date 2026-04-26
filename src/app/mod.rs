@@ -495,8 +495,10 @@ impl App {
                 }
             }
             View::Console => {
-                if let Some(action) = self.console_panel.handle_key(key) {
+                if let Some(action) = self.keymap.resolve(KeyContext::Console, key) {
                     self.dispatch(action);
+                } else {
+                    self.console_panel.handle_key(key);
                 }
             }
         }
@@ -1508,6 +1510,7 @@ impl App {
                 self.notifications
                     .notify_error(&format!("Unstage failed: {}", e));
             } else {
+                self.console_panel.record("Unstage", &file.path, "ok");
                 self.notifications
                     .notify(&format!("Unstaged: {}", file.path));
                 self.refresh_all();

@@ -211,7 +211,7 @@ pub struct OperationEntry {
 impl OperationEntry {
     pub fn new(action: &str, detail: &str, result: &str) -> Self {
         Self {
-            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             action: action.to_string(),
             detail: detail.to_string(),
             result: result.to_string(),

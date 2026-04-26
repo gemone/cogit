@@ -68,6 +68,23 @@ impl ConsolePanel {
                 let drain_count = self.entries.len() - MAX_ENTRIES;
                 self.entries.drain(0..drain_count);
             }
+            // Compact on-disk file to match in-memory entries
+            self.compact_log();
+        }
+    }
+
+    /// Rewrite the JSONL file to contain only the current in-memory entries.
+    fn compact_log(&self) {
+        if self.entries.is_empty() {
+            let _ = std::fs::remove_file(&self.log_path);
+            return;
+        }
+        if let Ok(mut file) = std::fs::File::create(&self.log_path) {
+            for entry in &self.entries {
+                if let Ok(json) = serde_json::to_string(entry) {
+                    let _ = writeln!(file, "{}", json);
+                }
+            }
         }
     }
 
@@ -177,7 +194,6 @@ impl Panel for ConsolePanel {
                 self.state.select(Some(0));
                 None
             }
-            KeyCode::Char('q') | KeyCode::Esc => Some(Action::BackToMain),
             _ => None,
         }
     }

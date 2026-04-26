@@ -155,6 +155,6 @@ fn section_context(view: &View) -> KeyContext {
         View::Stash => KeyContext::Stash,
         View::Remote => KeyContext::Remote,
         View::Shelve => KeyContext::Shelve,
-        View::Console => KeyContext::Global,
+        View::Console => KeyContext::Console,
     }
 }

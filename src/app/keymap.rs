@@ -17,10 +17,11 @@ pub enum KeyContext {
     Stash,
     Remote,
     Shelve,
+    Console,
 }
 
 impl KeyContext {
-    const ALL: [KeyContext; 7] = [
+    const ALL: [KeyContext; 8] = [
         KeyContext::Global,
         KeyContext::Main,
         KeyContext::Branches,
@@ -28,6 +29,7 @@ impl KeyContext {
         KeyContext::Stash,
         KeyContext::Remote,
         KeyContext::Shelve,
+        KeyContext::Console,
     ];
 
     /// Override map key used in KeymapOverrides.views
@@ -41,6 +43,7 @@ impl KeyContext {
             Self::Remote => Some("remote"),
             Self::Shelve => Some("shelve"),
             Self::Rebase => Some("rebase"),
+            Self::Console => Some("console"),
         }
     }
 }
@@ -276,6 +279,12 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             binding("diff", "Enter", "View shelve diff", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
+        KeyContext::Console => vec![
+            binding("back", "q", "Back to main view", Some(Action::BackToMain)),
+            binding("back_alt", "Esc", "Back to main view", Some(Action::BackToMain)),
+            binding("jump_bottom", "G", "Jump to latest", None),
+            binding("jump_top", "g", "Jump to oldest", None),
+        ],
     }
 }
 
@@ -413,5 +422,37 @@ mod tests {
         assert!(km.resolve(KeyContext::Global, key(KeyCode::Tab)).is_none());
         km.set_preset(KeymapPreset::Helix);
         assert!(matches!(km.resolve(KeyContext::Global, key(KeyCode::Tab)), Some(Action::NextView)));
+    }
+
+    #[test]
+    fn vim_global_3_opens_console_panel() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('3'))),
+            Some(Action::ShowConsolePanel)
+        ));
+    }
+
+    #[test]
+    fn helix_global_3_opens_console_panel() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('3'))),
+            Some(Action::ShowConsolePanel)
+        ));
+    }
+
+    #[test]
+    fn console_q_returns_to_main() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Console, key(KeyCode::Char('q'))),
+            Some(Action::BackToMain)
+        ));
+    }
+
+    #[test]
+    fn console_esc_returns_to_main() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Console, key(KeyCode::Esc)),
+            Some(Action::BackToMain)
+        ));
     }
 }
