@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
@@ -62,7 +62,7 @@ impl Panel for BranchPanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
@@ -70,19 +70,22 @@ impl Panel for BranchPanel {
         };
 
         let title = if self.search_mode {
-            format!(" Branches [search: {}] ", self.search_query)
+            format_panel_title(
+                &format!("Branches [search: {}]", self.search_query),
+                shortcut,
+            )
         } else if let RebaseState::InProgress {
             onto,
             done_count,
             total_count,
         } = &self.rebase_state
         {
-            format!(
-                " Branches [REBASE: {} {}/{}] ",
-                onto, done_count, total_count
+            format_panel_title(
+                &format!("Branches [REBASE: {} {}/{}]", onto, done_count, total_count),
+                shortcut,
             )
         } else {
-            " Branches ".to_string()
+            format_panel_title(self.title(), shortcut)
         };
 
         let items: Vec<ListItem> = self

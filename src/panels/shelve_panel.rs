@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
@@ -72,7 +72,7 @@ impl Panel for ShelvePanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         // If diff popup is open, render it
         if let Some((ref content, scroll)) = self.diff_popup {
             self.render_diff_popup(f, area, content, scroll);
@@ -86,14 +86,17 @@ impl Panel for ShelvePanel {
         };
 
         let title = if self.input_mode {
-            format!(" Shelves [{}: {}] ", self.input_prompt, self.input_buffer)
+            format_panel_title(
+                &format!("Shelves [{}: {}]", self.input_prompt, self.input_buffer),
+                shortcut,
+            )
         } else {
             let staged_indicator = if self.include_staged {
                 " [+staged]"
             } else {
                 ""
             };
-            format!(" Shelves{} ", staged_indicator)
+            format_panel_title(&format!("Shelves{}", staged_indicator), shortcut)
         };
 
         let items: Vec<ListItem> = self

@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
@@ -103,7 +103,7 @@ impl Panel for LogPanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
@@ -117,9 +117,9 @@ impl Panel for LogPanel {
 
         // Commit list with graph
         let title = if self.search_mode {
-            format!(" Log [search: {}] ", self.search_query)
+            format_panel_title(&format!("Log [search: {}]", self.search_query), shortcut)
         } else {
-            " Log ".to_string()
+            format_panel_title(self.title(), shortcut)
         };
 
         let items: Vec<ListItem> = self

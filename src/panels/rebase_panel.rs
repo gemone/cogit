@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::gitops::types::{RebaseAction, RebaseTodo};
 
@@ -153,7 +153,7 @@ impl Panel for RebasePanel {
         }
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let items: Vec<ListItem> = self
             .todos
             .iter()
@@ -182,9 +182,9 @@ impl Panel for RebasePanel {
             .collect();
 
         let title = if self.onto.is_empty() {
-            " Rebase ".to_string()
+            format_panel_title(self.title(), shortcut)
         } else {
-            format!(" Rebase onto {} ", self.onto)
+            format_panel_title(&format!("Rebase onto {}", self.onto), shortcut)
         };
 
         let border_color = if self.focused {

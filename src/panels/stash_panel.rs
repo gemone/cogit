@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::{Repository, shelve::ShelveEntry, stash::StashEntry};
@@ -73,7 +73,7 @@ impl Panel for StashPanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
@@ -112,7 +112,7 @@ impl Panel for StashPanel {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Stash/Shelve ")
+                    .title(format_panel_title(self.title(), shortcut))
                     .border_style(border_style),
             )
             .select(if self.tab == StashTab::Stash { 0 } else { 1 });

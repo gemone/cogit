@@ -10,7 +10,7 @@ use std::any::Any;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::types::OperationEntry;
@@ -121,14 +121,14 @@ impl Panel for ConsolePanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
             self.styles.border_inactive
         };
 
-        let title = format!(" Console [{}] ", self.entries.len());
+        let title = format_panel_title(&format!("Console [{}]", self.entries.len()), shortcut);
 
         let items: Vec<ListItem> = self
             .entries

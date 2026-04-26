@@ -1916,16 +1916,30 @@ impl App {
         (!parts.is_empty()).then(|| parts.join(" / "))
     }
 
+    fn pane_jump_key(keymap: &KeymapManager, pane: PaneId) -> Option<String> {
+        let action_id = match pane {
+            PaneId::Files | PaneId::Rebase => return None,
+            PaneId::Branches => "view_branches",
+            PaneId::Log => "view_log",
+            PaneId::Console => "view_console",
+            PaneId::Stash => "view_stash",
+            PaneId::Remote => "view_remote",
+            PaneId::Shelve => "view_shelve",
+        };
+        keymap.binding_key(KeyContext::Global, action_id)
+    }
+
     fn render_pane(&mut self, f: &mut Frame, pane: PaneId, area: Rect) {
+        let shortcut = Self::pane_jump_key(&self.keymap, pane);
         match pane {
-            PaneId::Files => self.filelist.render(f, area),
-            PaneId::Branches => self.branch_panel.render(f, area),
-            PaneId::Log => self.log_panel.render(f, area),
-            PaneId::Rebase => self.rebase_panel.render(f, area),
-            PaneId::Console => self.console_panel.render(f, area),
-            PaneId::Stash => self.stash_panel.render(f, area),
-            PaneId::Remote => self.remote_panel.render(f, area),
-            PaneId::Shelve => self.shelve_panel.render(f, area),
+            PaneId::Files => self.filelist.render(f, area, shortcut.as_deref()),
+            PaneId::Branches => self.branch_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Log => self.log_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Rebase => self.rebase_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Console => self.console_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Stash => self.stash_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Remote => self.remote_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Shelve => self.shelve_panel.render(f, area, shortcut.as_deref()),
         }
     }
 
@@ -2552,5 +2566,28 @@ mod tests {
             App::status_bar_layout_shortcuts(&keymap).as_deref(),
             Some("save:Ctrl+g global / Ctrl+r reset")
         );
+    }
+
+    #[test]
+    fn pane_jump_keys_follow_global_keymap_overrides() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        keymap.override_binding(KeyContext::Global, "view_branches", "9".to_string());
+
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Branches).as_deref(),
+            Some("9")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Remote).as_deref(),
+            Some("R")
+        );
+    }
+
+    #[test]
+    fn panes_without_direct_binding_have_no_jump_key() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+
+        assert_eq!(App::pane_jump_key(&keymap, PaneId::Files), None);
+        assert_eq!(App::pane_jump_key(&keymap, PaneId::Rebase), None);
     }
 }
