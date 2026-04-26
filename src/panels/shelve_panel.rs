@@ -88,7 +88,11 @@ impl Panel for ShelvePanel {
         let title = if self.input_mode {
             format!(" Shelves [{}: {}] ", self.input_prompt, self.input_buffer)
         } else {
-            let staged_indicator = if self.include_staged { " [+staged]" } else { "" };
+            let staged_indicator = if self.include_staged {
+                " [+staged]"
+            } else {
+                ""
+            };
             format!(" Shelves{} ", staged_indicator)
         };
 
@@ -150,31 +154,32 @@ impl Panel for ShelvePanel {
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         // Handle diff popup first
         if self.diff_popup.is_some()
-            && let Some((_, scroll)) = self.diff_popup.as_mut() {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        self.close_diff();
-                        return None;
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        *scroll = scroll.saturating_add(1);
-                        return None;
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        *scroll = scroll.saturating_sub(1);
-                        return None;
-                    }
-                    KeyCode::PageDown => {
-                        *scroll = scroll.saturating_add(10);
-                        return None;
-                    }
-                    KeyCode::PageUp => {
-                        *scroll = scroll.saturating_sub(10);
-                        return None;
-                    }
-                    _ => return None,
+            && let Some((_, scroll)) = self.diff_popup.as_mut()
+        {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.close_diff();
+                    return None;
                 }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    *scroll = scroll.saturating_add(1);
+                    return None;
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    *scroll = scroll.saturating_sub(1);
+                    return None;
+                }
+                KeyCode::PageDown => {
+                    *scroll = scroll.saturating_add(10);
+                    return None;
+                }
+                KeyCode::PageUp => {
+                    *scroll = scroll.saturating_sub(10);
+                    return None;
+                }
+                _ => return None,
             }
+        }
 
         if self.input_mode {
             match key.code {
@@ -237,9 +242,10 @@ impl Panel for ShelvePanel {
                 if let Some(index) = self.selected_index() {
                     // Show diff in popup
                     if let Ok(repo) = Repository::open(&self.repo)
-                        && let Ok(content) = repo.shelve_show(index) {
-                            self.diff_popup = Some((content, 0));
-                        }
+                        && let Ok(content) = repo.shelve_show(index)
+                    {
+                        self.diff_popup = Some((content, 0));
+                    }
                 }
                 None
             }

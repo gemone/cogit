@@ -3,11 +3,7 @@ use ratatui::widgets::ListState;
 
 /// Handle common list navigation keys (j/k/G/g/PageUp/PageDown/Ctrl+u/Ctrl+d).
 /// Returns true if the key was handled, false otherwise.
-pub fn handle_list_navigation(
-    state: &mut ListState,
-    filtered_len: usize,
-    key: KeyEvent,
-) -> bool {
+pub fn handle_list_navigation(state: &mut ListState, filtered_len: usize, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => {
             if filtered_len > 0 {

@@ -11,8 +11,8 @@ use std::any::Any;
 use super::{Action, Panel};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
-use crate::gitops::types::RebaseState;
 use crate::gitops::Repository;
+use crate::gitops::types::RebaseState;
 
 pub struct BranchPanel {
     repo: std::path::PathBuf,
@@ -71,8 +71,16 @@ impl Panel for BranchPanel {
 
         let title = if self.search_mode {
             format!(" Branches [search: {}] ", self.search_query)
-        } else if let RebaseState::InProgress { onto, done_count, total_count } = &self.rebase_state {
-            format!(" Branches [REBASE: {} {}/{}] ", onto, done_count, total_count)
+        } else if let RebaseState::InProgress {
+            onto,
+            done_count,
+            total_count,
+        } = &self.rebase_state
+        {
+            format!(
+                " Branches [REBASE: {} {}/{}] ",
+                onto, done_count, total_count
+            )
         } else {
             " Branches ".to_string()
         };
@@ -115,8 +123,7 @@ impl Panel for BranchPanel {
         } else {
             "Enter:switch n:new d:delete f:fetch p:push P:pull m:merge r:rebase /:search q:back"
         };
-        let help = Paragraph::new(help_text)
-        .style(self.styles.text_secondary);
+        let help = Paragraph::new(help_text).style(self.styles.text_secondary);
         let help_area = Rect {
             y: area.bottom().saturating_sub(1),
             height: 1,
@@ -160,21 +167,24 @@ impl Panel for BranchPanel {
         match key.code {
             KeyCode::Enter => {
                 if let Some(name) = self.current_branch_name()
-                    && let Some(idx) = self.state.selected() {
-                        let actual_i = self.filtered_indices.get(idx).copied().unwrap_or(idx);
-                        if let Some(branch) = self.branches.get(actual_i) {
-                            if branch.is_remote {
-                                return Some(Action::CheckoutRemoteBranch(name));
-                            } else {
-                                return Some(Action::CheckoutBranch(name));
-                            }
+                    && let Some(idx) = self.state.selected()
+                {
+                    let actual_i = self.filtered_indices.get(idx).copied().unwrap_or(idx);
+                    if let Some(branch) = self.branches.get(actual_i) {
+                        if branch.is_remote {
+                            return Some(Action::CheckoutRemoteBranch(name));
+                        } else {
+                            return Some(Action::CheckoutBranch(name));
                         }
                     }
+                }
                 None
             }
             KeyCode::Char('n') => Some(Action::CreateBranchDialog),
             KeyCode::Char('R') => self.current_branch_name().map(Action::RenameBranchDialog),
-            KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.current_branch_name().map(Action::DeleteBranch),
+            KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.current_branch_name().map(Action::DeleteBranch)
+            }
             KeyCode::Char('f') => Some(Action::FetchAll),
             KeyCode::Char('p') => Some(Action::PushCurrent),
             KeyCode::Char('P') => Some(Action::PullCurrent),
@@ -182,13 +192,15 @@ impl Panel for BranchPanel {
             KeyCode::Char('r') => self.current_branch_name().map(Action::RebaseBranch),
             KeyCode::Char('o') => {
                 if let Some(name) = self.current_branch_name()
-                    && let Some(idx) = self.state.selected() {
-                        let actual_i = self.filtered_indices.get(idx).copied().unwrap_or(idx);
-                        if let Some(branch) = self.branches.get(actual_i)
-                            && branch.is_remote {
-                                return Some(Action::CheckoutRemoteBranch(name));
-                            }
+                    && let Some(idx) = self.state.selected()
+                {
+                    let actual_i = self.filtered_indices.get(idx).copied().unwrap_or(idx);
+                    if let Some(branch) = self.branches.get(actual_i)
+                        && branch.is_remote
+                    {
+                        return Some(Action::CheckoutRemoteBranch(name));
                     }
+                }
                 None
             }
             KeyCode::Char('c') => {

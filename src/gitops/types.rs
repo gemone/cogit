@@ -33,7 +33,7 @@ pub struct CommitInfo {
     pub date: String,
     pub subject: String,
     pub graph_prefix: String,
-    pub refs: String,  // e.g. "HEAD -> main, tag: v1.0"
+    pub refs: String, // e.g. "HEAD -> main, tag: v1.0"
 }
 
 impl Default for CommitInfo {
@@ -74,7 +74,11 @@ pub struct WorktreeInfo {
 #[derive(Debug, Clone)]
 pub enum RebaseState {
     Idle,
-    InProgress { onto: String, done_count: usize, total_count: usize },
+    InProgress {
+        onto: String,
+        done_count: usize,
+        total_count: usize,
+    },
 }
 
 #[derive(Debug, Clone)]

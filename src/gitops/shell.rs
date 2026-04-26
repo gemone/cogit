@@ -246,9 +246,7 @@ impl Repository {
                 // Pure graph line (branch merge/fork connectors like "|/", "|\", "|\")
                 // Keep as connector row for visual continuity
                 let trimmed = line.trim();
-                if !trimmed.is_empty()
-                    && trimmed.chars().all(|c| "|/\\* ".contains(c))
-                {
+                if !trimmed.is_empty() && trimmed.chars().all(|c| "|/\\* ".contains(c)) {
                     commits.push(CommitInfo {
                         graph_prefix: line.to_string(),
                         ..CommitInfo::default()
@@ -477,11 +475,7 @@ impl Repository {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    pub(crate) fn git_cmd_with_env(
-        &self,
-        args: &[&str],
-        env: &[(&str, &str)],
-    ) -> Result<String> {
+    pub(crate) fn git_cmd_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Result<String> {
         let mut cmd = std::process::Command::new("git");
         cmd.args(args).current_dir(&self.path);
         for (k, v) in env {
@@ -493,6 +487,57 @@ impl Repository {
             anyhow::bail!("git {} failed: {}", args.join(" "), stderr);
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    pub fn git_config_get(&self, key: &str) -> Result<Option<String>> {
+        let output = std::process::Command::new("git")
+            .args(["config", "--local", "--get", key])
+            .current_dir(&self.path)
+            .output()?;
+        if output.status.success() {
+            return Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            ));
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.stdout.is_empty() && stderr.trim().is_empty() {
+            Ok(None)
+        } else {
+            anyhow::bail!("git config --local --get {} failed: {}", key, stderr.trim());
+        }
+    }
+
+    pub fn git_config_set(&self, key: &str, value: &str) -> Result<()> {
+        let output = std::process::Command::new("git")
+            .args(["config", "--local", key, value])
+            .current_dir(&self.path)
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git config --local {} failed: {}", key, stderr.trim());
+        }
+        Ok(())
+    }
+
+    pub fn git_config_unset(&self, key: &str) -> Result<()> {
+        let output = std::process::Command::new("git")
+            .args(["config", "--local", "--unset", key])
+            .current_dir(&self.path)
+            .output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.stdout.is_empty() && stderr.trim().is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!(
+                "git config --local --unset {} failed: {}",
+                key,
+                stderr.trim()
+            );
+        }
     }
 
     pub fn preview_merge(&self, branch: &str) -> Result<MergePreview> {

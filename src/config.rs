@@ -11,14 +11,49 @@ use std::{
 pub struct CogitConfig {
     #[serde(default)]
     pub keymap: KeymapConfig,
+    #[serde(default)]
+    pub layout: LayoutConfig,
 }
 
 impl Default for CogitConfig {
     fn default() -> Self {
         Self {
             keymap: KeymapConfig::default(),
+            layout: LayoutConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutConfig {
+    #[serde(default = "default_layout_active_index")]
+    pub active_index: usize,
+    #[serde(default = "default_layout_columns")]
+    pub columns: [u16; 4],
+    #[serde(default = "default_layout_rows")]
+    pub rows: [u16; 2],
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        Self {
+            active_index: default_layout_active_index(),
+            columns: default_layout_columns(),
+            rows: default_layout_rows(),
+        }
+    }
+}
+
+fn default_layout_active_index() -> usize {
+    0
+}
+
+fn default_layout_columns() -> [u16; 4] {
+    [28, 24, 24, 24]
+}
+
+fn default_layout_rows() -> [u16; 2] {
+    [62, 38]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,8 +123,8 @@ impl ConfigFile {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create config dir: {}", parent.display()))?;
         }
-        let rendered = toml::to_string_pretty(&self.config)
-            .context("failed to serialize cogit config")?;
+        let rendered =
+            toml::to_string_pretty(&self.config).context("failed to serialize cogit config")?;
         fs::write(&self.path, rendered)
             .with_context(|| format!("failed to write config file: {}", self.path.display()))?;
         Ok(())

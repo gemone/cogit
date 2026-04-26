@@ -30,8 +30,8 @@ pub struct RemotePanel {
 }
 
 enum AddRemoteStep {
-    Name,   // Waiting for remote name
-    Url,    // Waiting for remote URL
+    Name, // Waiting for remote name
+    Url,  // Waiting for remote URL
 }
 
 impl RemotePanel {

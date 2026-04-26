@@ -1,17 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use crate::app::styles::Styles;
 use crate::{
     app::{
-        keymap::{KeyBindingHint, KeyContext, KeymapManager},
         View,
+        keymap::{KeyBindingHint, KeyContext, KeymapManager},
     },
     vimkeys::Mode,
 };
@@ -57,7 +57,14 @@ impl HelpOverlay {
         }
     }
 
-    pub fn render(&self, f: &mut Frame, area: Rect, keymap: &KeymapManager, view: &View, mode: &Mode) {
+    pub fn render(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        keymap: &KeymapManager,
+        view: &View,
+        mode: &Mode,
+    ) {
         if !self.visible {
             return;
         }
@@ -87,7 +94,9 @@ impl HelpOverlay {
         let mut lines = Vec::new();
         lines.push(Line::from(vec![Span::styled(
             format!("Preset: {}", keymap.preset_name()),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )]));
         lines.push(Line::from(vec![Span::styled(
             "Close: Esc / q / ?    Scroll: j/k, PgUp/PgDn, G/g",
@@ -95,14 +104,24 @@ impl HelpOverlay {
         )]));
         lines.push(Line::from(""));
 
-        push_section(&mut lines, "Global", keymap.bindings_for(KeyContext::Global));
-        push_section(&mut lines, section_title(&view), keymap.bindings_for(section_context(&view)));
+        push_section(
+            &mut lines,
+            "Global",
+            keymap.bindings_for(KeyContext::Global),
+        );
+        push_section(
+            &mut lines,
+            section_title(&view),
+            keymap.bindings_for(section_context(&view)),
+        );
 
         if *mode == Mode::Command {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![Span::styled(
                 "Command mode",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )]));
             lines.push(Line::from(vec![Span::styled(
                 "  :keymap vim | :keymap helix",
@@ -120,13 +139,17 @@ impl HelpOverlay {
 fn push_section(lines: &mut Vec<Line<'static>>, title: &str, hints: Vec<KeyBindingHint>) {
     lines.push(Line::from(vec![Span::styled(
         title.to_string(),
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     )]));
     for hint in hints {
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {:<12}", hint.key),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(hint.description, Style::default().fg(Color::White)),
         ]));

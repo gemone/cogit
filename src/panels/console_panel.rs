@@ -1,10 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
-    Frame,
 };
 use std::any::Any;
 use std::io::{BufRead, Write};
@@ -107,7 +107,8 @@ impl ConsolePanel {
         if self.entries.len() > MAX_ENTRIES {
             self.entries.remove(0);
         }
-        self.state.select(Some(self.entries.len().saturating_sub(1)));
+        self.state
+            .select(Some(self.entries.len().saturating_sub(1)));
     }
 }
 
@@ -156,7 +157,11 @@ impl Panel for ConsolePanel {
                         self.styles.text_primary,
                     ),
                     Span::styled(
-                        if e.is_ok() { "✓".to_string() } else { "✗ ".to_string() },
+                        if e.is_ok() {
+                            "✓".to_string()
+                        } else {
+                            "✗ ".to_string()
+                        },
                         result_style,
                     ),
                 ]);

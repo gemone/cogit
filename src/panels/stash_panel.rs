@@ -1,10 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
-    Frame,
 };
 use std::any::Any;
 
@@ -278,7 +278,11 @@ impl StashPanel {
         }
 
         match key.code {
-            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('d')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 let len = self.stash_entries.len();
                 if len > 0 {
                     let i = self.stash_state.selected().unwrap_or(0);
@@ -286,7 +290,11 @@ impl StashPanel {
                 }
                 None
             }
-            KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 let i = self.stash_state.selected().unwrap_or(0);
                 self.stash_state.select(Some(i.saturating_sub(10)));
                 None
@@ -306,7 +314,11 @@ impl StashPanel {
         }
 
         match key.code {
-            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('d')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 let len = self.shelve_entries.len();
                 if len > 0 {
                     let i = self.shelve_state.selected().unwrap_or(0);
@@ -314,17 +326,26 @@ impl StashPanel {
                 }
                 None
             }
-            KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 let i = self.shelve_state.selected().unwrap_or(0);
                 self.shelve_state.select(Some(i.saturating_sub(10)));
                 None
             }
             KeyCode::Enter => self.selected_shelve_name().and_then(|name| {
-                self.shelve_entries.iter().find(|e| e.name == name).map(|e| Action::ShelveApply(e.index, false))
+                self.shelve_entries
+                    .iter()
+                    .find(|e| e.name == name)
+                    .map(|e| Action::ShelveApply(e.index, false))
             }),
             KeyCode::Char('d') => {
                 let i = self.shelve_state.selected().unwrap_or(0);
-                self.shelve_entries.get(i).map(|e| Action::ShelveDrop(e.index))
+                self.shelve_entries
+                    .get(i)
+                    .map(|e| Action::ShelveDrop(e.index))
             }
             _ => None,
         }
