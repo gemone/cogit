@@ -13,7 +13,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 use std::path::Path;
 
@@ -2364,19 +2364,9 @@ impl App {
         let popup_y = (area.height.saturating_sub(popup_h)) / 2;
         let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
 
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
+        render_popup_background(f, popup_area);
 
-        let paragraph = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(border_color)),
-        );
+        let paragraph = input_dialog_widget(title, border_color, lines);
         f.render_widget(paragraph, popup_area);
         popup_area
     }
@@ -2537,10 +2527,45 @@ impl App {
     }
 }
 
+fn render_popup_background(f: &mut Frame, popup_area: Rect) {
+    f.render_widget(Clear, popup_area);
+    let clear = Block::default().style(
+        Style::default()
+            .bg(ratatui::style::Color::Black)
+            .fg(ratatui::style::Color::White),
+    );
+    f.render_widget(clear, popup_area);
+}
+
+fn input_dialog_widget<'a>(
+    title: &'a str,
+    border_color: ratatui::style::Color,
+    lines: Vec<Line<'a>>,
+) -> Paragraph<'a> {
+    Paragraph::new(lines)
+        .style(
+            Style::default()
+                .bg(ratatui::style::Color::Black)
+                .fg(ratatui::style::Color::White),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(border_color))
+                .style(
+                    Style::default()
+                        .bg(ratatui::style::Color::Black)
+                        .fg(ratatui::style::Color::White),
+                ),
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::CogitConfig;
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn pane_and_view_roundtrip() {
@@ -2604,12 +2629,18 @@ mod tests {
     fn every_tiled_pane_has_a_jump_key() {
         let keymap = KeymapManager::new(&CogitConfig::default());
 
-        assert_eq!(App::pane_jump_key(&keymap, PaneId::Files).as_deref(), Some("0"));
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Files).as_deref(),
+            Some("0")
+        );
         assert_eq!(
             App::pane_jump_key(&keymap, PaneId::Branches).as_deref(),
             Some("1")
         );
-        assert_eq!(App::pane_jump_key(&keymap, PaneId::Log).as_deref(), Some("2"));
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Log).as_deref(),
+            Some("2")
+        );
         assert_eq!(
             App::pane_jump_key(&keymap, PaneId::Console).as_deref(),
             Some("3")
@@ -2630,5 +2661,36 @@ mod tests {
             App::pane_jump_key(&keymap, PaneId::Shelve).as_deref(),
             Some("W")
         );
+    }
+
+    #[test]
+    fn input_dialog_clears_background_before_rendering() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(
+                    Style::default()
+                        .bg(ratatui::style::Color::Red)
+                        .fg(ratatui::style::Color::White),
+                );
+                f.render_widget(background, area);
+
+                let popup_area = Rect::new(20, 10, 40, 8);
+                render_popup_background(f, popup_area);
+                let paragraph = input_dialog_widget(
+                    " Commit ",
+                    ratatui::style::Color::Green,
+                    vec![Line::from("commit")],
+                );
+                f.render_widget(paragraph, popup_area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(30, 12)].bg, ratatui::style::Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, ratatui::style::Color::Red);
     }
 }
