@@ -529,13 +529,19 @@ impl Repository {
             return Ok(());
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if output.stdout.is_empty() && stderr.trim().is_empty() {
+        let stderr_trimmed = stderr.trim();
+        if output.stdout.is_empty() && stderr_trimmed.is_empty() {
+            Ok(())
+        } else if output.status.code() == Some(5)
+            || stderr_trimmed.contains("key does not exist")
+            || stderr_trimmed.contains("not found")
+        {
             Ok(())
         } else {
             anyhow::bail!(
                 "git config --local --unset {} failed: {}",
                 key,
-                stderr.trim()
+                stderr_trimmed
             );
         }
     }
@@ -974,6 +980,12 @@ mod tests {
         let status = repo.status().unwrap();
         assert!(status.staged.is_empty());
         assert!(!status.unstaged.is_empty());
+    }
+
+    #[test]
+    fn test_git_config_unset_missing_key_is_ok() {
+        let (repo, _dir) = setup_test_repo("unset-missing-key");
+        repo.git_config_unset("cogit.layout").unwrap();
     }
 
     #[test]

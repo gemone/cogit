@@ -3,7 +3,11 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{ConfigFile, LayoutConfig},
+    config::{
+        ConfigFile, LayoutConfig, default_layout_active_index, default_layout_center_rows,
+        default_layout_columns, default_layout_left_rows, default_layout_right_rows,
+        default_layout_vertical,
+    },
     gitops::Repository,
 };
 
@@ -94,42 +98,18 @@ enum ColumnGroup {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutState {
-    #[serde(default = "default_active_index")]
+    #[serde(default = "default_layout_active_index")]
     pub active_index: usize,
-    #[serde(default = "default_vertical")]
+    #[serde(default = "default_layout_vertical")]
     pub vertical: [u16; 2],
-    #[serde(default = "default_columns")]
+    #[serde(default = "default_layout_columns")]
     pub columns: [u16; 3],
-    #[serde(default = "default_left_rows")]
+    #[serde(default = "default_layout_left_rows")]
     pub left_rows: [u16; 3],
-    #[serde(default = "default_center_rows")]
+    #[serde(default = "default_layout_center_rows")]
     pub center_rows: [u16; 2],
-    #[serde(default = "default_right_rows")]
+    #[serde(default = "default_layout_right_rows")]
     pub right_rows: [u16; 2],
-}
-
-fn default_active_index() -> usize {
-    0
-}
-
-fn default_vertical() -> [u16; 2] {
-    [82, 18]
-}
-
-fn default_columns() -> [u16; 3] {
-    [28, 44, 28]
-}
-
-fn default_left_rows() -> [u16; 3] {
-    [48, 28, 24]
-}
-
-fn default_center_rows() -> [u16; 2] {
-    [68, 32]
-}
-
-fn default_right_rows() -> [u16; 2] {
-    [52, 48]
 }
 
 const MIN_COLUMN_WEIGHT: u16 = 12;
@@ -138,14 +118,7 @@ const MIN_VERTICAL_WEIGHT: u16 = 12;
 
 impl Default for LayoutState {
     fn default() -> Self {
-        Self {
-            active_index: default_active_index(),
-            vertical: default_vertical(),
-            columns: default_columns(),
-            left_rows: default_left_rows(),
-            center_rows: default_center_rows(),
-            right_rows: default_right_rows(),
-        }
+        LayoutConfig::default().into()
     }
 }
 
@@ -380,6 +353,11 @@ impl From<LayoutState> for LayoutConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_state_default_matches_layout_config_default() {
+        assert_eq!(LayoutState::default(), LayoutConfig::default().into());
+    }
 
     #[test]
     fn cycles_panes_in_visual_order() {

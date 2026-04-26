@@ -118,27 +118,27 @@ impl From<LayoutConfigCompat> for LayoutConfig {
     }
 }
 
-fn default_layout_active_index() -> usize {
+pub(crate) fn default_layout_active_index() -> usize {
     0
 }
 
-fn default_layout_vertical() -> [u16; 2] {
+pub(crate) fn default_layout_vertical() -> [u16; 2] {
     [82, 18]
 }
 
-fn default_layout_columns() -> [u16; 3] {
+pub(crate) fn default_layout_columns() -> [u16; 3] {
     [28, 44, 28]
 }
 
-fn default_layout_left_rows() -> [u16; 3] {
+pub(crate) fn default_layout_left_rows() -> [u16; 3] {
     [48, 28, 24]
 }
 
-fn default_layout_center_rows() -> [u16; 2] {
+pub(crate) fn default_layout_center_rows() -> [u16; 2] {
     [68, 32]
 }
 
-fn default_layout_right_rows() -> [u16; 2] {
+pub(crate) fn default_layout_right_rows() -> [u16; 2] {
     [52, 48]
 }
 

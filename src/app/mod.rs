@@ -1845,7 +1845,7 @@ impl App {
                 self.styles.text_primary,
             ),
             Span::styled(
-                " save:Ctrl+s local / Ctrl+g global / Ctrl+r reset ",
+                " save:Alt+s local / Ctrl+g global / Ctrl+r reset ",
                 self.styles.text_secondary,
             ),
         ]))

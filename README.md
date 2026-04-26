@@ -40,7 +40,7 @@ Tiled layout notes:
 - The main screen now keeps every panel visible in a shared lazygit-style tiled layout.
 - `Tab` / `Shift+Tab` moves focus between panes.
 - `Ctrl+Arrow` resizes the active pane group.
-- `Ctrl+s` saves the current layout into the repo-local `.git/config` as `cogit.layout`.
+- `Alt+s` saves the current layout into the repo-local `.git/config` as `cogit.layout`.
 - `Ctrl+g` saves the current layout as the global default in `config.toml`.
 - `Ctrl+r` clears the repo-local override and reloads the saved default layout.
 

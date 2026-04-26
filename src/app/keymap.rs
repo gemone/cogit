@@ -271,7 +271,7 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
             ),
             binding(
                 "save_layout_local",
-                "Ctrl+s",
+                "Alt+s",
                 "Save layout to .git/config",
                 Some(Action::SaveLayoutLocal),
             ),
@@ -515,7 +515,7 @@ fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
             ),
             binding(
                 "save_layout_local",
-                "Ctrl+s",
+                "Alt+s",
                 "Save layout to .git/config",
                 Some(Action::SaveLayoutLocal),
             ),
@@ -620,6 +620,9 @@ fn key_label(key: KeyEvent) -> String {
         KeyCode::Char(' ') => "Space".into(),
         KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
             format!("Ctrl+{}", c.to_ascii_lowercase())
+        }
+        KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) => {
+            format!("Alt+{}", c.to_ascii_lowercase())
         }
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Enter => "Enter".into(),
@@ -765,6 +768,28 @@ mod tests {
         assert!(matches!(
             vim_km().resolve(KeyContext::Global, key(KeyCode::Char('3'))),
             Some(Action::ShowConsolePanel)
+        ));
+    }
+
+    #[test]
+    fn vim_global_alt_s_saves_layout_locally() {
+        assert!(matches!(
+            vim_km().resolve(
+                KeyContext::Global,
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT)
+            ),
+            Some(Action::SaveLayoutLocal)
+        ));
+    }
+
+    #[test]
+    fn helix_global_alt_s_saves_layout_locally() {
+        assert!(matches!(
+            helix_km().resolve(
+                KeyContext::Global,
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT)
+            ),
+            Some(Action::SaveLayoutLocal)
         ));
     }
 
