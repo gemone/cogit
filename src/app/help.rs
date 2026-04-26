@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use crate::app::styles::Styles;
@@ -75,13 +75,16 @@ impl HelpOverlay {
         let popup_y = (area.height.saturating_sub(popup_h)) / 2;
         let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
 
-        let clear = Block::default().style(Style::default().bg(Color::Black));
+        f.render_widget(Clear, popup_area);
+
+        let clear = Block::default().style(Style::default().bg(Color::Black).fg(Color::White));
         f.render_widget(clear, popup_area);
 
         let border = Block::default()
             .borders(Borders::ALL)
             .title(format!(" Which Key — {} ", keymap.preset_name()))
-            .border_style(self.styles.border_active);
+            .border_style(self.styles.border_active)
+            .style(Style::default().bg(Color::Black).fg(Color::White));
         f.render_widget(border, popup_area);
 
         let inner = Rect {
@@ -130,9 +133,42 @@ impl HelpOverlay {
         }
 
         let paragraph = Paragraph::new(lines)
-            .style(self.styles.text_primary)
+            .style(self.styles.text_primary.bg(Color::Black))
             .scroll((self.scroll, 0));
         f.render_widget(paragraph, inner);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::{View, keymap::KeymapManager, styles::Styles},
+        config::CogitConfig,
+        vimkeys::Mode,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn help_overlay_clears_background_before_rendering() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut overlay = HelpOverlay::new(&Styles::default());
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        overlay.open();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(Style::default().bg(Color::Red));
+                f.render_widget(background, area);
+                overlay.render(f, area, &keymap, &View::Main, &Mode::Normal);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(12, 8)].bg, Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, Color::Red);
     }
 }
 
