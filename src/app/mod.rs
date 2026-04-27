@@ -1,3 +1,4 @@
+pub mod async_task;
 pub mod cmdline;
 pub mod confirmation;
 pub mod help;
@@ -84,6 +85,7 @@ pub struct App {
     merge_dialog: Option<(String, MergePreview)>, // (branch, preview)
     help_overlay: HelpOverlay,
     confirmation_dialog: Option<confirmation::ConfirmationDialog>,
+    async_task_manager: async_task::TaskManager,
 }
 
 impl App {
@@ -138,6 +140,7 @@ impl App {
             merge_dialog: None,
             help_overlay,
             confirmation_dialog: None,
+            async_task_manager: async_task::TaskManager::new(),
         };
         app.switch_view(app.view.clone());
         Ok(app)
@@ -155,6 +158,18 @@ impl App {
                 }
             }
             self.notifications.cleanup();
+            // Poll completed background tasks and show results
+            for result in self.async_task_manager.drain_completed() {
+                if result.ok {
+                    self.notifications.notify(&format!("{}: {}", result.label, result.message));
+                    // Refresh views after successful commit/push/fetch
+                    if result.label == "Commit" || result.label == "Push" || result.label == "Fetch" {
+                        self.refresh_all();
+                    }
+                } else {
+                    self.notifications.notify_error(&format!("{} failed: {}", result.label, result.message));
+                }
+            }
         }
         Ok(())
     }
@@ -1050,16 +1065,10 @@ impl App {
                     self.commit_dialog = Some(String::new());
                 }
             }
-            Action::Commit(msg) => match self.repo.commit(&msg) {
-                Ok(_) => {
-                    self.console_panel.record("Commit", &msg, "ok");
-                    self.notifications.notify(&format!("Committed: {}", msg));
-                    self.refresh_all();
-                }
-                Err(e) => self
-                    .notifications
-                    .notify_error(&format!("Commit failed: {}", e)),
-            },
+            Action::Commit(msg) => {
+                let repo = self.repo.clone();
+                self.async_task_manager.spawn_commit(repo, msg);
+            }
             Action::WipCommit => match self.repo.wip_commit() {
                 Ok(_) => {
                     self.console_panel.record("WIP Commit", "", "ok");
