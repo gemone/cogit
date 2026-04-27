@@ -280,16 +280,12 @@ impl LayoutState {
             .constraints(if hidden_console {
                 vec![Constraint::Percentage(100), Constraint::Length(0)]
             } else {
-                percentages(&self.vertical)
+                percentages(&self.vertical).to_vec()
             })
             .split(area);
 
         let top = vertical[0];
-        let console = if hidden_console {
-            Rect::new(area.x, area.y + area.height, 0, 0)
-        } else {
-            vertical[1]
-        };
+        let console = vertical[1];
 
         let columns = Layout::default()
             .direction(Direction::Horizontal)
@@ -423,12 +419,8 @@ impl LayoutState {
     }
 }
 
-fn percentages<const N: usize>(weights: &[u16; N]) -> Vec<Constraint> {
-    weights
-        .iter()
-        .copied()
-        .map(Constraint::Percentage)
-        .collect()
+fn percentages<const N: usize>(weights: &[u16; N]) -> [Constraint; N] {
+    std::array::from_fn(|i| Constraint::Percentage(weights[i]))
 }
 
 fn parse_local_layout(raw: &str) -> Option<LayoutConfig> {
