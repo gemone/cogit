@@ -1,4 +1,5 @@
 pub mod cmdline;
+pub mod confirmation;
 pub mod help;
 pub mod keymap;
 pub mod layout;
@@ -82,6 +83,7 @@ pub struct App {
     gitignore_popup: Option<(String, u16)>,   // (content, scroll)
     merge_dialog: Option<(String, MergePreview)>, // (branch, preview)
     help_overlay: HelpOverlay,
+    confirmation_dialog: Option<confirmation::ConfirmationDialog>,
 }
 
 impl App {
@@ -135,6 +137,7 @@ impl App {
             gitignore_popup: None,
             merge_dialog: None,
             help_overlay,
+            confirmation_dialog: None,
         };
         app.switch_view(app.view.clone());
         Ok(app)
@@ -171,6 +174,10 @@ impl App {
                 self.gitignore_popup = None;
                 return;
             }
+            if self.confirmation_dialog.is_some() {
+                self.confirmation_dialog = None;
+                return;
+            }
         }
 
         // Ref diff popup takes priority
@@ -200,11 +207,34 @@ impl App {
             }
         }
 
+        // Confirmation dialog takes priority (before the ignore-all guard)
+        if let Some(ref mut dialog) = self.confirmation_dialog {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    dialog.move_up();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    dialog.move_down();
+                }
+                KeyCode::Enter => {
+                    let dialog = std::mem::take(&mut self.confirmation_dialog);
+                    if let Some(d) = dialog {
+                        if d.confirmed() {
+                            self.dispatch(d.confirmation.to_action());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Ignore all other keys while a popup is active so they do not
         // fall through to the normal app dispatch.
         if self.ref_diff_popup.is_some()
             || self.diff_popup.is_some()
             || self.gitignore_popup.is_some()
+            || self.confirmation_dialog.is_some()
         {
             return;
         }
@@ -819,6 +849,25 @@ impl App {
     }
 
     fn dispatch(&mut self, action: Action) {
+        // Intercept dangerous actions and show confirmation dialog first
+        if matches!(
+            action,
+            Action::DeleteBranch(_)
+                | Action::StashDrop(_)
+                | Action::StashPop(_)
+                | Action::StashApply(_)
+                | Action::PushCurrent
+                | Action::RemoveWorktree(_)
+                | Action::DeleteTag(_)
+                | Action::RemoveRemote(_)
+        ) {
+            self.confirmation_dialog = Some(confirmation::ConfirmationDialog::new(
+                confirmation::Confirmation::from_action(&action),
+                &self.styles,
+            ));
+            return;
+        }
+
         match action {
             Action::Quit => {
                 self.should_quit = true;
@@ -1894,6 +1943,11 @@ impl App {
         // Gitignore popup overlay
         if let Some((ref content, scroll)) = self.gitignore_popup {
             self.draw_gitignore_popup(f, size, content, &scroll);
+        }
+
+        // Confirmation dialog overlay
+        if let Some(ref dialog) = self.confirmation_dialog {
+            dialog.render(f, size);
         }
 
         // Notifications on top of everything
