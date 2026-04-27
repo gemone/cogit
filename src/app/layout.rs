@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::{
         ConfigFile, LayoutConfig, default_layout_active_index, default_layout_center_rows,
-        default_layout_columns, default_layout_left_rows, default_layout_right_rows,
-        default_layout_vertical,
+        default_layout_columns, default_layout_hidden, default_layout_left_rows,
+        default_layout_right_rows, default_layout_vertical,
     },
     gitops::Repository,
 };
@@ -96,6 +96,21 @@ enum ColumnGroup {
     Bottom,
 }
 
+impl ColumnGroup {
+    fn column_index(self) -> Option<usize> {
+        match self {
+            ColumnGroup::Left => Some(0),
+            ColumnGroup::Center => Some(1),
+            ColumnGroup::Right => Some(2),
+            ColumnGroup::Bottom => None,
+        }
+    }
+}
+
+const LEFT_STACK_PANES: [PaneId; 3] = [PaneId::Files, PaneId::Branches, PaneId::Stash];
+const CENTER_STACK_PANES: [PaneId; 2] = [PaneId::Log, PaneId::Rebase];
+const RIGHT_STACK_PANES: [PaneId; 2] = [PaneId::Remote, PaneId::Shelve];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutState {
     #[serde(default = "default_layout_active_index")]
@@ -110,6 +125,8 @@ pub struct LayoutState {
     pub center_rows: [u16; 2],
     #[serde(default = "default_layout_right_rows")]
     pub right_rows: [u16; 2],
+    #[serde(default = "default_layout_hidden")]
+    pub hidden: [bool; 8],
 }
 
 const MIN_COLUMN_WEIGHT: u16 = 12;
@@ -141,30 +158,84 @@ impl LayoutState {
         self.active_pane().label()
     }
 
+    pub fn is_hidden(&self, pane: PaneId) -> bool {
+        self.hidden[pane.index()]
+    }
+
+    pub fn show_all_panes(&mut self) {
+        self.hidden = [false; 8];
+    }
+
+    pub fn hide_pane(&mut self, pane: PaneId) -> bool {
+        if self.is_hidden(pane) {
+            return true;
+        }
+        let visible_count = PaneId::ALL
+            .iter()
+            .filter(|pane_id| !self.is_hidden(**pane_id))
+            .count();
+        if visible_count <= 1 {
+            return false;
+        }
+
+        self.hidden[pane.index()] = true;
+        if self.active_pane() == pane {
+            self.focus_next_visible();
+        }
+        true
+    }
+
+    fn focus_next_visible(&mut self) {
+        for offset in 1..=PaneId::ALL.len() {
+            let idx = (self.active_index + offset) % PaneId::ALL.len();
+            let pane = PaneId::from_index(idx);
+            if !self.is_hidden(pane) {
+                self.active_index = idx;
+                return;
+            }
+        }
+    }
+
     pub fn normalized(mut self) -> Self {
         self.active_index %= PaneId::ALL.len();
+        if self.hidden.iter().all(|hidden| *hidden) {
+            self.hidden = [false; 8];
+        }
         normalize_weights(&mut self.vertical, MIN_VERTICAL_WEIGHT);
         normalize_weights(&mut self.columns, MIN_COLUMN_WEIGHT);
         normalize_weights(&mut self.left_rows, MIN_STACK_WEIGHT);
         normalize_weights(&mut self.center_rows, MIN_STACK_WEIGHT);
         normalize_weights(&mut self.right_rows, MIN_STACK_WEIGHT);
+        if self.is_hidden(self.active_pane()) {
+            self.focus_next_visible();
+        }
         self
+    }
+
+    pub fn show_pane(&mut self, pane: PaneId) {
+        self.hidden[pane.index()] = false;
     }
 
     pub fn set_active(&mut self, pane: PaneId) {
         self.active_index = pane.index();
+        if self.is_hidden(pane) {
+            self.focus_next_visible();
+        }
     }
 
     pub fn next_pane(&mut self) {
-        self.active_index = (self.active_index + 1) % PaneId::ALL.len();
+        self.focus_next_visible();
     }
 
     pub fn prev_pane(&mut self) {
-        self.active_index = if self.active_index == 0 {
-            PaneId::ALL.len() - 1
-        } else {
-            self.active_index - 1
-        };
+        for offset in 1..=PaneId::ALL.len() {
+            let idx = (self.active_index + PaneId::ALL.len() - offset) % PaneId::ALL.len();
+            let pane = PaneId::from_index(idx);
+            if !self.is_hidden(pane) {
+                self.active_index = idx;
+                return;
+            }
+        }
     }
 
     pub fn reset(&mut self) {
@@ -203,13 +274,22 @@ impl LayoutState {
     }
 
     pub fn pane_rects(&self, area: Rect) -> [Rect; 8] {
+        let hidden_console = self.is_hidden(PaneId::Console);
         let vertical = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(percentages(&self.vertical))
+            .constraints(if hidden_console {
+                vec![Constraint::Percentage(100), Constraint::Length(0)]
+            } else {
+                percentages(&self.vertical)
+            })
             .split(area);
 
         let top = vertical[0];
-        let console = vertical[1];
+        let console = if hidden_console {
+            Rect::new(area.x, area.y + area.height, 0, 0)
+        } else {
+            vertical[1]
+        };
 
         let columns = Layout::default()
             .direction(Direction::Horizontal)
@@ -229,48 +309,117 @@ impl LayoutState {
             .constraints(percentages(&self.right_rows))
             .split(columns[2]);
 
-        [
+        let mut rects = [
             left[0], left[1], left[2], center[0], center[1], right[0], right[1], console,
-        ]
+        ];
+        for pane in PaneId::ALL {
+            if self.is_hidden(pane) {
+                rects[pane.index()] = Rect::new(0, 0, 0, 0);
+            }
+        }
+        rects
     }
 
     fn adjust_width(&mut self, delta: i16) {
-        match self.active_pane().column_group() {
-            ColumnGroup::Left => {
-                shift_weights_with_min(&mut self.columns, 0, 1, delta, MIN_COLUMN_WEIGHT)
-            }
-            ColumnGroup::Center => {
-                shift_weights_with_min(&mut self.columns, 1, 2, delta, MIN_COLUMN_WEIGHT)
-            }
-            ColumnGroup::Right => {
-                shift_weights_with_min(&mut self.columns, 2, 1, delta, MIN_COLUMN_WEIGHT)
-            }
-            ColumnGroup::Bottom => {}
+        let group = self.active_pane().column_group();
+        let from = group.column_index();
+        let to = self
+            .visible_column_neighbor(group)
+            .and_then(ColumnGroup::column_index);
+
+        if let (Some(from), Some(to)) = (from, to) {
+            shift_weights_with_min(&mut self.columns, from, to, delta, MIN_COLUMN_WEIGHT);
         }
     }
 
     fn adjust_height(&mut self, delta: i16) {
         let pane = self.active_pane();
+        let index = pane.stack_index();
+        let neighbor = self.visible_stack_neighbor(pane);
+
         match pane.column_group() {
             ColumnGroup::Left => {
-                if let Some(index) = pane.stack_index() {
-                    adjust_stack(&mut self.left_rows, index, delta);
+                if let (Some(index), Some(neighbor)) = (index, neighbor) {
+                    shift_weights_with_min(
+                        &mut self.left_rows,
+                        index,
+                        neighbor,
+                        delta,
+                        MIN_STACK_WEIGHT,
+                    );
                 }
             }
             ColumnGroup::Center => {
-                if let Some(index) = pane.stack_index() {
-                    adjust_stack(&mut self.center_rows, index, delta);
+                if let (Some(index), Some(neighbor)) = (index, neighbor) {
+                    shift_weights_with_min(
+                        &mut self.center_rows,
+                        index,
+                        neighbor,
+                        delta,
+                        MIN_STACK_WEIGHT,
+                    );
                 }
             }
             ColumnGroup::Right => {
-                if let Some(index) = pane.stack_index() {
-                    adjust_stack(&mut self.right_rows, index, delta);
+                if let (Some(index), Some(neighbor)) = (index, neighbor) {
+                    shift_weights_with_min(
+                        &mut self.right_rows,
+                        index,
+                        neighbor,
+                        delta,
+                        MIN_STACK_WEIGHT,
+                    );
                 }
             }
             ColumnGroup::Bottom => {
                 shift_weights_with_min(&mut self.vertical, 1, 0, delta, MIN_VERTICAL_WEIGHT)
             }
         }
+    }
+
+    fn group_visible(&self, group: ColumnGroup) -> bool {
+        match group {
+            ColumnGroup::Left => LEFT_STACK_PANES.iter().any(|pane| !self.is_hidden(*pane)),
+            ColumnGroup::Center => CENTER_STACK_PANES.iter().any(|pane| !self.is_hidden(*pane)),
+            ColumnGroup::Right => RIGHT_STACK_PANES.iter().any(|pane| !self.is_hidden(*pane)),
+            ColumnGroup::Bottom => !self.is_hidden(PaneId::Console),
+        }
+    }
+
+    fn visible_column_neighbor(&self, group: ColumnGroup) -> Option<ColumnGroup> {
+        let candidates = match group {
+            ColumnGroup::Left => [Some(ColumnGroup::Center), Some(ColumnGroup::Right)],
+            ColumnGroup::Center => [Some(ColumnGroup::Right), Some(ColumnGroup::Left)],
+            ColumnGroup::Right => [Some(ColumnGroup::Center), Some(ColumnGroup::Left)],
+            ColumnGroup::Bottom => [None, None],
+        };
+
+        candidates
+            .into_iter()
+            .flatten()
+            .find(|candidate| self.group_visible(*candidate))
+    }
+
+    fn visible_stack_neighbor(&self, pane: PaneId) -> Option<usize> {
+        let stack = match pane.column_group() {
+            ColumnGroup::Left => &LEFT_STACK_PANES[..],
+            ColumnGroup::Center => &CENTER_STACK_PANES[..],
+            ColumnGroup::Right => &RIGHT_STACK_PANES[..],
+            ColumnGroup::Bottom => return None,
+        };
+        let index = pane.stack_index()?;
+
+        for candidate in (index + 1)..stack.len() {
+            if !self.is_hidden(stack[candidate]) {
+                return Some(candidate);
+            }
+        }
+        for candidate in (0..index).rev() {
+            if !self.is_hidden(stack[candidate]) {
+                return Some(candidate);
+            }
+        }
+        None
     }
 }
 
@@ -349,22 +498,6 @@ fn normalize_weights<const N: usize>(weights: &mut [u16; N], min_weight: u16) {
     *weights = normalized;
 }
 
-fn adjust_stack<const N: usize>(weights: &mut [u16; N], index: usize, delta: i16) {
-    if N < 2 {
-        return;
-    }
-
-    let neighbor = if delta >= 0 {
-        if index + 1 < N { index + 1 } else { index - 1 }
-    } else if index > 0 {
-        index - 1
-    } else {
-        1
-    };
-
-    shift_weights_with_min(weights, index, neighbor, delta, MIN_STACK_WEIGHT);
-}
-
 fn shift_weights_with_min<const N: usize>(
     weights: &mut [u16; N],
     from: usize,
@@ -405,6 +538,7 @@ impl From<LayoutConfig> for LayoutState {
             left_rows: value.left_rows,
             center_rows: value.center_rows,
             right_rows: value.right_rows,
+            hidden: value.hidden,
         }
     }
 }
@@ -418,6 +552,7 @@ impl From<LayoutState> for LayoutConfig {
             left_rows: value.left_rows,
             center_rows: value.center_rows,
             right_rows: value.right_rows,
+            hidden: value.hidden,
         }
     }
 }
@@ -446,16 +581,62 @@ mod tests {
     }
 
     #[test]
-    fn adjusts_column_weights() {
+    fn center_column_growth_borrows_from_visible_right_neighbor_first() {
         let mut layout = LayoutState::default();
         layout.set_active(PaneId::Log);
         let before = layout.columns;
+
         layout.grow_width();
-        assert_ne!(layout.columns, before);
+
+        assert_eq!(layout.columns[0], before[0]);
+        assert!(layout.columns[1] > before[1]);
+        assert!(layout.columns[2] < before[2]);
         assert_eq!(
             layout.columns.iter().sum::<u16>(),
             before.iter().sum::<u16>()
         );
+    }
+
+    #[test]
+    fn center_column_growth_falls_back_to_left_when_right_column_hidden() {
+        let mut layout = LayoutState::default();
+        layout.set_active(PaneId::Log);
+        assert!(layout.hide_pane(PaneId::Remote));
+        assert!(layout.hide_pane(PaneId::Shelve));
+        let before = layout.columns;
+
+        layout.grow_width();
+
+        assert!(layout.columns[0] < before[0]);
+        assert!(layout.columns[1] > before[1]);
+        assert_eq!(layout.columns[2], before[2]);
+    }
+
+    #[test]
+    fn top_pane_growth_borrows_from_next_visible_pane_below() {
+        let mut layout = LayoutState::default();
+        layout.set_active(PaneId::Files);
+        let before = layout.left_rows;
+
+        layout.grow_height();
+
+        assert!(layout.left_rows[0] > before[0]);
+        assert!(layout.left_rows[1] < before[1]);
+        assert_eq!(layout.left_rows[2], before[2]);
+    }
+
+    #[test]
+    fn top_pane_growth_skips_hidden_neighbor_below() {
+        let mut layout = LayoutState::default();
+        layout.set_active(PaneId::Files);
+        assert!(layout.hide_pane(PaneId::Branches));
+        let before = layout.left_rows;
+
+        layout.grow_height();
+
+        assert!(layout.left_rows[0] > before[0]);
+        assert_eq!(layout.left_rows[1], before[1]);
+        assert!(layout.left_rows[2] < before[2]);
     }
 
     #[test]
@@ -480,6 +661,7 @@ mod tests {
             left_rows: [0, 0, 100],
             center_rows: [100, 0],
             right_rows: [1, 99],
+            hidden: [false; 8],
         }
         .normalized();
 
@@ -530,6 +712,7 @@ mod tests {
             left_rows: [u16::MAX, u16::MAX, u16::MAX],
             center_rows: [u16::MAX, u16::MAX],
             right_rows: [u16::MAX, u16::MAX],
+            hidden: [false; 8],
         }
         .normalized();
 
@@ -559,6 +742,7 @@ mod tests {
             left_rows: [45, 30, 25],
             center_rows: [70, 30],
             right_rows: [55, 45],
+            hidden: [false, true, false, false, false, false, true, false],
         };
         let rendered = toml::to_string(&LayoutConfig::from(layout.clone())).unwrap();
         let parsed: LayoutConfig = toml::from_str(&rendered).unwrap();
@@ -582,7 +766,7 @@ mod tests {
 
     #[test]
     fn parses_json_local_layout() {
-        let raw = r#"{"active_index":4,"vertical":[84,16],"columns":[30,42,28],"left_rows":[45,30,25],"center_rows":[70,30],"right_rows":[55,45]}"#;
+        let raw = r#"{"active_index":4,"vertical":[84,16],"columns":[30,42,28],"left_rows":[45,30,25],"center_rows":[70,30],"right_rows":[55,45],"hidden":[false,true,false,false,false,false,true,false]}"#;
         let parsed = parse_local_layout(raw).unwrap();
         assert_eq!(parsed.active_index, 4);
         assert_eq!(parsed.vertical, [84, 16]);
@@ -590,5 +774,54 @@ mod tests {
         assert_eq!(parsed.left_rows, [45, 30, 25]);
         assert_eq!(parsed.center_rows, [70, 30]);
         assert_eq!(parsed.right_rows, [55, 45]);
+        assert_eq!(
+            parsed.hidden,
+            [false, true, false, false, false, false, true, false]
+        );
+    }
+
+    #[test]
+    fn hidden_panes_roundtrip_through_layout_config() {
+        let mut layout = LayoutState::default();
+        layout.hide_pane(PaneId::Branches);
+        layout.hide_pane(PaneId::Console);
+
+        let rendered = toml::to_string(&LayoutConfig::from(layout.clone())).unwrap();
+        let parsed: LayoutConfig = toml::from_str(&rendered).unwrap();
+        let roundtrip = LayoutState::from(parsed);
+
+        assert!(roundtrip.is_hidden(PaneId::Branches));
+        assert!(roundtrip.is_hidden(PaneId::Console));
+        assert!(!roundtrip.is_hidden(PaneId::Files));
+    }
+
+    #[test]
+    fn hidden_console_expands_top_layout() {
+        let mut layout = LayoutState::default();
+        layout.hide_pane(PaneId::Console);
+
+        let rects = layout.pane_rects(Rect::new(0, 0, 120, 40));
+        let console = rects[PaneId::Console.index()];
+        let files = rects[PaneId::Files.index()];
+        let branches = rects[PaneId::Branches.index()];
+        let stash = rects[PaneId::Stash.index()];
+
+        assert_eq!(console.width, 0);
+        assert_eq!(console.height, 0);
+        assert_eq!(files.y, 0);
+        assert_eq!(files.height + branches.height + stash.height, 40);
+    }
+
+    #[test]
+    fn cannot_hide_last_visible_pane() {
+        let mut layout = LayoutState::default();
+        for pane in PaneId::ALL {
+            if pane != PaneId::Files {
+                assert!(layout.hide_pane(pane));
+            }
+        }
+
+        assert!(!layout.hide_pane(PaneId::Files));
+        assert!(!layout.is_hidden(PaneId::Files));
     }
 }

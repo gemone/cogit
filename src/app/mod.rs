@@ -476,6 +476,11 @@ impl App {
             self.mode = Mode::Normal;
         }
 
+        if key.code == KeyCode::Esc && self.mode != Mode::Normal {
+            self.dispatch(Action::EnterNormalMode);
+            return;
+        }
+
         match self.view {
             View::Main => {
                 self.handle_main_key(key);
@@ -822,8 +827,43 @@ impl App {
                 self.mode = Mode::Command;
                 self.cmdline.open();
             }
+            Action::EnterNormalMode => {
+                self.mode = Mode::Normal;
+                self.notifications.notify("Switched to normal mode");
+            }
+            Action::EnterEditMode => {
+                self.mode = Mode::Edit;
+                self.notifications.notify("Switched to edit mode");
+            }
+            Action::EnterVisualMode => {
+                self.mode = Mode::Visual;
+                self.notifications.notify("Switched to visual mode");
+            }
+            Action::HideActivePane => {
+                if self.mode != Mode::Visual {
+                    self.notifications
+                        .notify_error("Hide pane is only available in visual mode");
+                } else {
+                    let pane = self.layout.active_pane();
+                    if self.layout.hide_pane(pane) {
+                        let next_view = Self::view_for_pane(self.layout.active_pane());
+                        self.switch_view(next_view);
+                        self.notifications
+                            .notify(&format!("Hid {} pane", pane.label()));
+                    } else {
+                        self.notifications
+                            .notify_error("Cannot hide the last visible pane");
+                    }
+                }
+            }
+            Action::ShowAllPanes => {
+                self.layout.show_all_panes();
+                self.layout.show_pane(Self::pane_for_view(&self.view));
+                self.switch_view(Self::view_for_pane(self.layout.active_pane()));
+                self.notifications.notify("Showed all panes");
+            }
             Action::BackToMain => {
-                self.switch_view(View::Main);
+                self.reveal_pane(PaneId::Files);
             }
             Action::NextView => {
                 self.layout.next_pane();
@@ -834,64 +874,85 @@ impl App {
                 self.switch_view(Self::view_for_pane(self.layout.active_pane()));
             }
             Action::ShowFilesPanel => {
-                self.switch_view(View::Main);
+                self.reveal_pane(PaneId::Files);
             }
             Action::ShowBranchPanel => {
-                self.switch_view(View::Branches);
+                self.reveal_pane(PaneId::Branches);
             }
             Action::ShowLogPanel => {
-                self.switch_view(View::Log);
+                self.reveal_pane(PaneId::Log);
             }
             Action::ShowConsolePanel => {
                 self.console_panel.refresh();
-                self.switch_view(View::Console);
+                self.reveal_pane(PaneId::Console);
             }
             Action::ShowStashPanel => {
-                self.switch_view(View::Stash);
+                self.reveal_pane(PaneId::Stash);
             }
             Action::ShowRemotePanel => {
-                self.switch_view(View::Remote);
+                self.reveal_pane(PaneId::Remote);
             }
             Action::ShowRebasePanel => {
-                self.switch_view(View::Rebase);
+                self.reveal_pane(PaneId::Rebase);
             }
             Action::ShowShelvePanel => {
-                self.switch_view(View::Shelve);
+                self.reveal_pane(PaneId::Shelve);
             }
             Action::GrowPaneWidth => {
-                self.layout.grow_width();
+                if self.mode == Mode::Edit {
+                    self.layout.grow_width();
+                }
             }
             Action::ShrinkPaneWidth => {
-                self.layout.shrink_width();
+                if self.mode == Mode::Edit {
+                    self.layout.shrink_width();
+                }
             }
             Action::GrowPaneHeight => {
-                self.layout.grow_height();
+                if self.mode == Mode::Edit {
+                    self.layout.grow_height();
+                }
             }
             Action::ShrinkPaneHeight => {
-                self.layout.shrink_height();
-            }
-            Action::ResetLayout => match self.layout.clear_local(&self.repo) {
-                Ok(_) => {
-                    self.layout = LayoutState::load(&self.repo, &self.config_file.config.layout);
-                    self.switch_view(Self::view_for_pane(self.layout.active_pane()));
-                    self.notifications.notify("Reset layout to saved default");
+                if self.mode == Mode::Edit {
+                    self.layout.shrink_height();
                 }
-                Err(e) => self
-                    .notifications
-                    .notify_error(&format!("Failed to reset layout: {}", e)),
-            },
-            Action::SaveLayoutLocal => match self.layout.persist_local(&self.repo) {
-                Ok(_) => self.notifications.notify("Saved layout to .git/config"),
-                Err(e) => self
-                    .notifications
-                    .notify_error(&format!("Failed to save layout locally: {}", e)),
-            },
-            Action::SaveLayoutGlobal => match self.layout.persist_global(&mut self.config_file) {
-                Ok(_) => self.notifications.notify("Saved layout to global config"),
-                Err(e) => self
-                    .notifications
-                    .notify_error(&format!("Failed to save layout globally: {}", e)),
-            },
+            }
+            Action::ResetLayout => {
+                if self.mode == Mode::Edit {
+                    match self.layout.clear_local(&self.repo) {
+                        Ok(_) => {
+                            self.layout =
+                                LayoutState::load(&self.repo, &self.config_file.config.layout);
+                            self.switch_view(Self::view_for_pane(self.layout.active_pane()));
+                            self.notifications.notify("Reset layout to saved default");
+                        }
+                        Err(e) => self
+                            .notifications
+                            .notify_error(&format!("Failed to reset layout: {}", e)),
+                    }
+                }
+            }
+            Action::SaveLayoutLocal => {
+                if self.mode == Mode::Edit {
+                    match self.layout.persist_local(&self.repo) {
+                        Ok(_) => self.notifications.notify("Saved layout to .git/config"),
+                        Err(e) => self
+                            .notifications
+                            .notify_error(&format!("Failed to save layout locally: {}", e)),
+                    }
+                }
+            }
+            Action::SaveLayoutGlobal => {
+                if self.mode == Mode::Edit {
+                    match self.layout.persist_global(&mut self.config_file) {
+                        Ok(_) => self.notifications.notify("Saved layout to global config"),
+                        Err(e) => self
+                            .notifications
+                            .notify_error(&format!("Failed to save layout globally: {}", e)),
+                    }
+                }
+            }
             Action::Stage => {
                 self.dispatch_stage();
             }
@@ -1735,6 +1796,11 @@ impl App {
         }
     }
 
+    fn reveal_pane(&mut self, pane: PaneId) {
+        self.layout.show_pane(pane);
+        self.switch_view(Self::view_for_pane(pane));
+    }
+
     fn refresh_all(&mut self) {
         self.filelist.refresh();
         self.branch_panel.refresh();
@@ -1851,10 +1917,20 @@ impl App {
             ),
             Span::styled(" cogit ", self.styles.text_secondary),
             Span::styled(
+                format!(" mode:{} ", Self::mode_label(&self.mode)),
+                self.styles.highlight.add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
                 format!(" active:{} ", self.layout.active_label()),
                 self.styles.text_primary,
             ),
         ];
+        if let Some(shortcuts) = Self::mode_shortcuts(&self.keymap) {
+            spans.push(Span::styled(
+                format!(" {} ", shortcuts),
+                self.styles.text_secondary,
+            ));
+        }
         if let Some(shortcuts) = Self::status_bar_layout_shortcuts(&self.keymap) {
             spans.push(Span::styled(
                 format!(" {} ", shortcuts),
@@ -1886,7 +1962,11 @@ impl App {
             return;
         }
 
-        let mut footer_parts: Vec<String> = Vec::new();
+        let mut footer_parts: Vec<String> = vec![
+            format!("[mode:{}]", Self::mode_label(&self.mode)),
+            format!("[active:{}]", self.layout.active_label()),
+            format!("[keymap:{}]", self.keymap.preset_name()),
+        ];
         for hint in self.keymap.bindings_for(KeyContext::Global) {
             footer_parts.push(format!("{}:{}", hint.key, hint.description));
         }
@@ -1896,11 +1976,31 @@ impl App {
         {
             footer_parts.push(format!("{}:{}", hint.key, hint.description));
         }
-        footer_parts.push(format!("[active:{}]", self.layout.active_label()));
-        footer_parts.push(format!("[keymap:{}]", self.keymap.preset_name()));
         let help = Paragraph::new(format!(" {}", footer_parts.join("  ")))
             .style(self.styles.text_secondary);
         f.render_widget(help, area);
+    }
+
+    fn mode_label(mode: &Mode) -> &'static str {
+        match mode {
+            Mode::Normal => "NORMAL",
+            Mode::Edit => "EDIT",
+            Mode::Visual => "VISUAL",
+            Mode::Command => "COMMAND",
+        }
+    }
+
+    fn mode_shortcuts(keymap: &KeymapManager) -> Option<String> {
+        let normal = keymap.binding_key(KeyContext::Global, "mode_normal");
+        let edit = keymap.binding_key(KeyContext::Global, "mode_edit");
+        let visual = keymap.binding_key(KeyContext::Global, "mode_visual");
+
+        match (normal, edit, visual) {
+            (Some(normal), Some(edit), Some(visual)) => Some(format!(
+                "modes:{normal} normal / {edit} edit / {visual} visual"
+            )),
+            _ => None,
+        }
     }
 
     fn status_bar_layout_shortcuts(keymap: &KeymapManager) -> Option<String> {
@@ -2515,6 +2615,23 @@ mod tests {
     }
 
     #[test]
+    fn mode_label_formats_normal_edit_and_visual() {
+        assert_eq!(App::mode_label(&Mode::Normal), "NORMAL");
+        assert_eq!(App::mode_label(&Mode::Edit), "EDIT");
+        assert_eq!(App::mode_label(&Mode::Visual), "VISUAL");
+    }
+
+    #[test]
+    fn mode_shortcuts_follow_native_vim_style_bindings() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+
+        assert_eq!(
+            App::mode_shortcuts(&keymap).as_deref(),
+            Some("modes:Esc normal / i edit / v visual")
+        );
+    }
+
+    #[test]
     fn status_bar_shortcuts_follow_global_keymap_overrides() {
         let keymap = KeymapManager::new(&CogitConfig::default());
         keymap.override_binding(
@@ -2682,5 +2799,115 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
         assert_eq!(buffer[(40, 12)].bg, ratatui::style::Color::Black);
         assert_eq!(buffer[(2, 2)].bg, ratatui::style::Color::Red);
+    }
+
+    #[test]
+    fn status_bar_renders_mode_label_and_native_mode_shortcuts() {
+        let repo_dir = setup_test_repo("status-mode-hints");
+        let app = App::new(&repo_dir).unwrap();
+        let backend = TestBackend::new(120, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 120, 1);
+                app.draw_status_bar(f, area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let rendered = (0..120)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("mode:NORMAL"));
+        assert!(rendered.contains("modes:Esc normal / i edit / v visual"));
+    }
+
+    #[test]
+    fn footer_renders_current_mode_label() {
+        let repo_dir = setup_test_repo("footer-mode-hint");
+        let app = App::new(&repo_dir).unwrap();
+        let backend = TestBackend::new(120, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 120, 1);
+                app.draw_footer(f, area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let rendered = (0..120)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("[mode:NORMAL]"));
+    }
+
+    #[test]
+    fn normal_mode_ignores_resize_shortcuts() {
+        let repo_dir = setup_test_repo("normal-mode-resize");
+        let mut app = App::new(&repo_dir).unwrap();
+        let before = app.layout.columns;
+
+        app.handle_event(KeyEvent::new(
+            KeyCode::Right,
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.layout.columns, before);
+    }
+
+    #[test]
+    fn edit_mode_allows_resize_shortcuts() {
+        let repo_dir = setup_test_repo("edit-mode-resize");
+        let mut app = App::new(&repo_dir).unwrap();
+        let before = app.layout.columns;
+        app.dispatch(Action::EnterEditMode);
+
+        app.handle_event(KeyEvent::new(
+            KeyCode::Right,
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+
+        assert_eq!(app.mode, Mode::Edit);
+        assert_ne!(app.layout.columns, before);
+    }
+
+    #[test]
+    fn visual_mode_can_hide_active_pane() {
+        let repo_dir = setup_test_repo("visual-mode-hide");
+        let mut app = App::new(&repo_dir).unwrap();
+        app.dispatch(Action::EnterVisualMode);
+
+        app.handle_event(KeyEvent::new(
+            KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+
+        assert_eq!(app.mode, Mode::Visual);
+        assert!(app.layout.is_hidden(PaneId::Files));
+        assert_eq!(app.layout.active_pane(), PaneId::Branches);
+        assert_eq!(app.view, View::Branches);
+    }
+
+    #[test]
+    fn escape_leaves_visual_mode_without_leaving_current_view() {
+        let repo_dir = setup_test_repo("visual-mode-escape");
+        let mut app = App::new(&repo_dir).unwrap();
+        app.dispatch(Action::ShowConsolePanel);
+        app.dispatch(Action::EnterVisualMode);
+
+        app.handle_event(KeyEvent::new(
+            KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.view, View::Console);
+        assert_eq!(app.layout.active_pane(), PaneId::Console);
     }
 }

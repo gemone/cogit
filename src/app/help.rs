@@ -83,7 +83,18 @@ impl HelpOverlay {
         f.render_widget(border, popup_area);
 
         let inner = popup_inner_area_without_footer(popup_area);
+        let paragraph = Paragraph::new(self.content_lines(keymap, view, mode))
+            .style(popup_style().fg(self.styles.text_primary.fg.unwrap_or(Color::White)))
+            .scroll((self.scroll, 0));
+        f.render_widget(paragraph, inner);
+    }
 
+    fn content_lines(
+        &self,
+        keymap: &KeymapManager,
+        view: &View,
+        mode: &Mode,
+    ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         lines.push(Line::from(vec![Span::styled(
             format!("Preset: {}", keymap.preset_name()),
@@ -104,8 +115,8 @@ impl HelpOverlay {
         );
         push_section(
             &mut lines,
-            section_title(&view),
-            keymap.bindings_for(section_context(&view)),
+            section_title(view),
+            keymap.bindings_for(section_context(view)),
         );
 
         if *mode == Mode::Command {
@@ -122,10 +133,17 @@ impl HelpOverlay {
             )]));
         }
 
-        let paragraph = Paragraph::new(lines)
-            .style(popup_style().fg(self.styles.text_primary.fg.unwrap_or(Color::White)))
-            .scroll((self.scroll, 0));
-        f.render_widget(paragraph, inner);
+        lines
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_lines(
+        &self,
+        keymap: &KeymapManager,
+        view: &View,
+        mode: &Mode,
+    ) -> Vec<Line<'static>> {
+        self.content_lines(keymap, view, mode)
     }
 }
 
@@ -138,6 +156,28 @@ mod tests {
         vimkeys::Mode,
     };
     use ratatui::{Terminal, backend::TestBackend, widgets::Block};
+
+    #[test]
+    fn help_overlay_lists_native_mode_shortcuts_in_global_section() {
+        let mut overlay = HelpOverlay::new(&Styles::default());
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        overlay.open();
+
+        let lines = overlay.debug_lines(&keymap, &View::Main, &Mode::Normal);
+        let rendered = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Esc"));
+        assert!(rendered.contains("Switch to normal mode"));
+        assert!(rendered.contains("i"));
+        assert!(rendered.contains("Switch to edit mode"));
+        assert!(rendered.contains("v"));
+        assert!(rendered.contains("Switch to visual mode"));
+    }
 
     #[test]
     fn help_overlay_clears_background_before_rendering() {

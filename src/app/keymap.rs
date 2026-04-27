@@ -245,6 +245,36 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
                 "Open command palette",
                 Some(Action::OpenCommandPalette),
             ),
+            binding(
+                "mode_normal",
+                "Esc",
+                "Switch to normal mode",
+                Some(Action::EnterNormalMode),
+            ),
+            binding(
+                "mode_edit",
+                "i",
+                "Switch to edit mode",
+                Some(Action::EnterEditMode),
+            ),
+            binding(
+                "mode_visual",
+                "v",
+                "Switch to visual mode",
+                Some(Action::EnterVisualMode),
+            ),
+            binding(
+                "hide_active_pane",
+                "x",
+                "Hide active pane",
+                Some(Action::HideActivePane),
+            ),
+            binding(
+                "show_all_panes",
+                "X",
+                "Show all panes",
+                Some(Action::ShowAllPanes),
+            ),
             binding("help", "?", "Show which-key/help", Some(Action::Help)),
             binding("quit", "q", "Quit", Some(Action::Quit)),
             binding(
@@ -500,6 +530,36 @@ fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
                 ":",
                 "Open command palette",
                 Some(Action::OpenCommandPalette),
+            ),
+            binding(
+                "mode_normal",
+                "Esc",
+                "Switch to normal mode",
+                Some(Action::EnterNormalMode),
+            ),
+            binding(
+                "mode_edit",
+                "i",
+                "Switch to edit mode",
+                Some(Action::EnterEditMode),
+            ),
+            binding(
+                "mode_visual",
+                "v",
+                "Switch to visual mode",
+                Some(Action::EnterVisualMode),
+            ),
+            binding(
+                "hide_active_pane",
+                "x",
+                "Hide active pane",
+                Some(Action::HideActivePane),
+            ),
+            binding(
+                "show_all_panes",
+                "X",
+                "Show all panes",
+                Some(Action::ShowAllPanes),
             ),
             binding("help", "?", "Show which-key/help", Some(Action::Help)),
             binding("quit", "q", "Quit", Some(Action::Quit)),
@@ -891,5 +951,53 @@ mod tests {
             vim_km().resolve(KeyContext::Console, key(KeyCode::Esc)),
             Some(Action::BackToMain)
         ));
+    }
+
+    #[test]
+    fn vim_global_i_enters_edit_mode() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('i'))),
+            Some(Action::EnterEditMode)
+        ));
+    }
+
+    #[test]
+    fn vim_global_v_enters_visual_mode() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('v'))),
+            Some(Action::EnterVisualMode)
+        ));
+    }
+
+    #[test]
+    fn helix_global_i_enters_edit_mode() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('i'))),
+            Some(Action::EnterEditMode)
+        ));
+    }
+
+    #[test]
+    fn helix_global_v_enters_visual_mode() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('v'))),
+            Some(Action::EnterVisualMode)
+        ));
+    }
+
+    #[test]
+    fn mode_normal_binding_uses_esc_hint() {
+        assert_eq!(
+            vim_km()
+                .binding_key(KeyContext::Global, "mode_normal")
+                .as_deref(),
+            Some("Esc")
+        );
+        assert_eq!(
+            helix_km()
+                .binding_key(KeyContext::Global, "mode_normal")
+                .as_deref(),
+            Some("Esc")
+        );
     }
 }

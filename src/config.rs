@@ -33,6 +33,7 @@ pub struct LayoutConfig {
     pub left_rows: [u16; 3],
     pub center_rows: [u16; 2],
     pub right_rows: [u16; 2],
+    pub hidden: [bool; 8],
 }
 
 impl Default for LayoutConfig {
@@ -44,6 +45,7 @@ impl Default for LayoutConfig {
             left_rows: default_layout_left_rows(),
             center_rows: default_layout_center_rows(),
             right_rows: default_layout_right_rows(),
+            hidden: default_layout_hidden(),
         }
     }
 }
@@ -69,6 +71,8 @@ struct LayoutConfigV2 {
     center_rows: [u16; 2],
     #[serde(default = "default_layout_right_rows")]
     right_rows: [u16; 2],
+    #[serde(default = "default_layout_hidden")]
+    hidden: [bool; 8],
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -91,6 +95,7 @@ impl From<LayoutConfigCompat> for LayoutConfig {
                 left_rows: v2.left_rows,
                 center_rows: v2.center_rows,
                 right_rows: v2.right_rows,
+                hidden: v2.hidden,
             },
             LayoutConfigCompat::Legacy(legacy) => {
                 let mut layout = LayoutConfig::default();
@@ -140,6 +145,10 @@ pub(crate) fn default_layout_center_rows() -> [u16; 2] {
 
 pub(crate) fn default_layout_right_rows() -> [u16; 2] {
     [52, 48]
+}
+
+pub(crate) fn default_layout_hidden() -> [bool; 8] {
+    [false; 8]
 }
 
 fn default_legacy_layout_columns() -> [u16; 4] {
@@ -274,7 +283,7 @@ mod tests {
     #[test]
     fn parses_new_layout_config_from_toml() {
         let cfg: CogitConfig = toml::from_str(
-            "[layout]\nactive_index = 4\nvertical = [84, 16]\ncolumns = [30, 42, 28]\nleft_rows = [45, 30, 25]\ncenter_rows = [70, 30]\nright_rows = [55, 45]\n",
+            "[layout]\nactive_index = 4\nvertical = [84, 16]\ncolumns = [30, 42, 28]\nleft_rows = [45, 30, 25]\ncenter_rows = [70, 30]\nright_rows = [55, 45]\nhidden = [false, true, false, false, false, false, true, false]\n",
         )
         .unwrap();
         assert_eq!(cfg.layout.active_index, 4);
@@ -283,6 +292,10 @@ mod tests {
         assert_eq!(cfg.layout.left_rows, [45, 30, 25]);
         assert_eq!(cfg.layout.center_rows, [70, 30]);
         assert_eq!(cfg.layout.right_rows, [55, 45]);
+        assert_eq!(
+            cfg.layout.hidden,
+            [false, true, false, false, false, false, true, false]
+        );
     }
 
     #[test]
