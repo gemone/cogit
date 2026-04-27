@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
@@ -54,7 +54,7 @@ impl Panel for FileListPanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
@@ -88,7 +88,7 @@ impl Panel for FileListPanel {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Files ")
+                    .title(format_panel_title(self.title(), shortcut))
                     .border_style(border_style),
             )
             .highlight_style(self.styles.highlight);
@@ -120,33 +120,34 @@ impl Panel for FileListPanel {
 
     fn refresh(&mut self) {
         if let Ok(repo) = Repository::open(&self.repo)
-            && let Ok(status) = repo.status() {
-                self.files.clear();
-                for f in &status.staged {
-                    self.files.push(FileItem {
-                        path: f.path.clone(),
-                        old_path: None,
-                        status: f.status,
-                        staged: true,
-                    });
-                }
-                for f in &status.unstaged {
-                    self.files.push(FileItem {
-                        path: f.path.clone(),
-                        old_path: None,
-                        status: f.status,
-                        staged: false,
-                    });
-                }
-                for f in &status.untracked {
-                    self.files.push(FileItem {
-                        path: f.path.clone(),
-                        old_path: None,
-                        status: f.status,
-                        staged: false,
-                    });
-                }
+            && let Ok(status) = repo.status()
+        {
+            self.files.clear();
+            for f in &status.staged {
+                self.files.push(FileItem {
+                    path: f.path.clone(),
+                    old_path: None,
+                    status: f.status,
+                    staged: true,
+                });
             }
+            for f in &status.unstaged {
+                self.files.push(FileItem {
+                    path: f.path.clone(),
+                    old_path: None,
+                    status: f.status,
+                    staged: false,
+                });
+            }
+            for f in &status.untracked {
+                self.files.push(FileItem {
+                    path: f.path.clone(),
+                    old_path: None,
+                    status: f.status,
+                    staged: false,
+                });
+            }
+        }
         if self.files.is_empty() {
             self.state.select(None);
         } else if self.state.selected().unwrap_or(0) >= self.files.len() {

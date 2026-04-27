@@ -1,17 +1,23 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
-    Frame,
+    widgets::Paragraph,
 };
 
-use crate::app::styles::Styles;
+use crate::app::{
+    popup::{
+        centered_popup_area, popup_block, popup_inner_area_without_footer, popup_style,
+        render_popup_background,
+    },
+    styles::Styles,
+};
 use crate::{
     app::{
-        keymap::{KeyBindingHint, KeyContext, KeymapManager},
         View,
+        keymap::{KeyBindingHint, KeyContext, KeymapManager},
     },
     vimkeys::Mode,
 };
@@ -57,37 +63,44 @@ impl HelpOverlay {
         }
     }
 
-    pub fn render(&self, f: &mut Frame, area: Rect, keymap: &KeymapManager, view: &View, mode: &Mode) {
+    pub fn render(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        keymap: &KeymapManager,
+        view: &View,
+        mode: &Mode,
+    ) {
         if !self.visible {
             return;
         }
 
-        let popup_w = (area.width.saturating_mul(4) / 5).max(60);
-        let popup_h = (area.height.saturating_mul(4) / 5).max(18);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+        let popup_area = centered_popup_area(area, 4, 5, 60, 4, 5, 18);
+        render_popup_background(f, popup_area);
 
-        let clear = Block::default().style(Style::default().bg(Color::Black));
-        f.render_widget(clear, popup_area);
-
-        let border = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Which Key — {} ", keymap.preset_name()))
-            .border_style(self.styles.border_active);
+        let title = format!(" Which Key — {} ", keymap.preset_name());
+        let border = popup_block(title.as_str(), self.styles.border_active);
         f.render_widget(border, popup_area);
 
-        let inner = Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(2),
-        };
+        let inner = popup_inner_area_without_footer(popup_area);
+        let paragraph = Paragraph::new(self.content_lines(keymap, view, mode))
+            .style(popup_style().fg(self.styles.text_primary.fg.unwrap_or(Color::White)))
+            .scroll((self.scroll, 0));
+        f.render_widget(paragraph, inner);
+    }
 
+    fn content_lines(
+        &self,
+        keymap: &KeymapManager,
+        view: &View,
+        mode: &Mode,
+    ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         lines.push(Line::from(vec![Span::styled(
             format!("Preset: {}", keymap.preset_name()),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )]));
         lines.push(Line::from(vec![Span::styled(
             "Close: Esc / q / ?    Scroll: j/k, PgUp/PgDn, G/g",
@@ -95,14 +108,24 @@ impl HelpOverlay {
         )]));
         lines.push(Line::from(""));
 
-        push_section(&mut lines, "Global", keymap.bindings_for(KeyContext::Global));
-        push_section(&mut lines, section_title(&view), keymap.bindings_for(section_context(&view)));
+        push_section(
+            &mut lines,
+            "Global",
+            keymap.bindings_for(KeyContext::Global),
+        );
+        push_section(
+            &mut lines,
+            section_title(view),
+            keymap.bindings_for(section_context(view)),
+        );
 
         if *mode == Mode::Command {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![Span::styled(
                 "Command mode",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )]));
             lines.push(Line::from(vec![Span::styled(
                 "  :keymap vim | :keymap helix",
@@ -110,23 +133,89 @@ impl HelpOverlay {
             )]));
         }
 
-        let paragraph = Paragraph::new(lines)
-            .style(self.styles.text_primary)
-            .scroll((self.scroll, 0));
-        f.render_widget(paragraph, inner);
+        lines
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_lines(
+        &self,
+        keymap: &KeymapManager,
+        view: &View,
+        mode: &Mode,
+    ) -> Vec<Line<'static>> {
+        self.content_lines(keymap, view, mode)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::{View, keymap::KeymapManager, styles::Styles},
+        config::CogitConfig,
+        vimkeys::Mode,
+    };
+    use ratatui::{Terminal, backend::TestBackend, widgets::Block};
+
+    #[test]
+    fn help_overlay_lists_native_mode_shortcuts_in_global_section() {
+        let mut overlay = HelpOverlay::new(&Styles::default());
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        overlay.open();
+
+        let lines = overlay.debug_lines(&keymap, &View::Main, &Mode::Normal);
+        let rendered = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Esc"));
+        assert!(rendered.contains("Switch to normal mode"));
+        assert!(rendered.contains("i"));
+        assert!(rendered.contains("Switch to edit mode"));
+        assert!(rendered.contains("v"));
+        assert!(rendered.contains("Switch to visual mode"));
+    }
+
+    #[test]
+    fn help_overlay_clears_background_before_rendering() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut overlay = HelpOverlay::new(&Styles::default());
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        overlay.open();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(Style::default().bg(Color::Red));
+                f.render_widget(background, area);
+                overlay.render(f, area, &keymap, &View::Main, &Mode::Normal);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(12, 8)].bg, Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, Color::Red);
     }
 }
 
 fn push_section(lines: &mut Vec<Line<'static>>, title: &str, hints: Vec<KeyBindingHint>) {
     lines.push(Line::from(vec![Span::styled(
         title.to_string(),
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     )]));
     for hint in hints {
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {:<12}", hint.key),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(hint.description, Style::default().fg(Color::White)),
         ]));

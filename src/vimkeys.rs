@@ -3,9 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
     Normal,
+    Edit,
     Visual,
     Command,
-    Insert,
 }
 
 #[derive(Debug, Clone)]
@@ -27,7 +27,7 @@ pub enum Motion {
 pub fn parse_key_event(key: KeyEvent, mode: Mode) -> Option<Motion> {
     match mode {
         Mode::Normal => parse_normal(key),
-        Mode::Command | Mode::Insert => parse_insert(key),
+        Mode::Command | Mode::Edit => parse_insert(key),
         Mode::Visual => parse_normal(key),
     }
 }

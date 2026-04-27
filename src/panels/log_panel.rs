@@ -1,18 +1,18 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title, format_section_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
-use crate::gitops::types::CommitDetail;
 use crate::gitops::Repository;
+use crate::gitops::types::CommitDetail;
 
 /// Branch-line colors for graph rendering (lazygit-style cycling)
 const GRAPH_COLORS: &[Color] = &[
@@ -41,10 +41,7 @@ fn colored_graph_spans(prefix: &str, base_style: Style) -> Vec<Span<'_>> {
                     buf.clear();
                 }
                 let line_color = GRAPH_COLORS[color_idx % GRAPH_COLORS.len()];
-                spans.push(Span::styled(
-                    ch.to_string(),
-                    base_style.fg(line_color),
-                ));
+                spans.push(Span::styled(ch.to_string(), base_style.fg(line_color)));
                 color_idx += 1;
             }
             _ => {
@@ -106,7 +103,7 @@ impl Panel for LogPanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
@@ -120,9 +117,9 @@ impl Panel for LogPanel {
 
         // Commit list with graph
         let title = if self.search_mode {
-            format!(" Log [search: {}] ", self.search_query)
+            format_panel_title(&format!("Log [search: {}]", self.search_query), shortcut)
         } else {
-            " Log ".to_string()
+            format_panel_title(self.title(), shortcut)
         };
 
         let items: Vec<ListItem> = self
@@ -133,7 +130,10 @@ impl Panel for LogPanel {
 
                 // Graph prefix with colored branch lines
                 if !c.graph_prefix.is_empty() {
-                    spans.extend(colored_graph_spans(&c.graph_prefix, self.styles.text_secondary));
+                    spans.extend(colored_graph_spans(
+                        &c.graph_prefix,
+                        self.styles.text_secondary,
+                    ));
                 }
 
                 // Connector rows (pure graph lines without commit data) only show lines
@@ -204,7 +204,7 @@ impl Panel for LogPanel {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Detail ")
+                    .title(format_section_title("Detail"))
                     .border_style(border_style),
             )
             .scroll((0, 0));

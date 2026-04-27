@@ -1,8 +1,10 @@
 pub mod cmdline;
 pub mod help;
 pub mod keymap;
+pub mod layout;
 pub mod navigation;
 pub mod notification;
+pub mod popup;
 pub mod styles;
 
 use anyhow::Result;
@@ -12,24 +14,28 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Paragraph},
 };
 use std::path::Path;
 
+use self::layout::{LayoutState, PaneId};
+use crate::app::keymap::{KeyContext, KeymapManager};
+use crate::config::{ConfigFile, KeymapPreset};
 use crate::gitops::Repository;
 use crate::gitops::shell::{MergePreview, MergeStrategy};
 use crate::panels::{
     Action, Panel, branch_panel::BranchPanel, console_panel::ConsolePanel,
-    filelist_panel::FileListPanel, log_panel::LogPanel,
-    rebase_panel, remote_panel, shelve_panel::ShelvePanel, stash_panel::StashPanel,
+    filelist_panel::FileListPanel, log_panel::LogPanel, rebase_panel, remote_panel,
+    shelve_panel::ShelvePanel, stash_panel::StashPanel,
 };
-use crate::config::{ConfigFile, KeymapPreset};
-use crate::app::keymap::{KeyContext, KeymapManager};
 use crate::vimkeys::Mode;
 
 use self::cmdline::CmdLine;
 use self::help::HelpOverlay;
 use self::notification::NotificationManager;
+use self::popup::{
+    centered_popup_area, popup_block, popup_inner_area, popup_style, render_popup_background,
+};
 use self::styles::Styles;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +55,7 @@ pub struct App {
     repo: Repository,
     config_file: ConfigFile,
     keymap: KeymapManager,
+    layout: LayoutState,
     view: View,
     mode: Mode,
     styles: Styles,
@@ -68,11 +75,11 @@ pub struct App {
     diff_popup: Option<(String, String, u16)>, // (path, content, scroll)
     ref_diff_popup: Option<(String, String, u16)>, // (title "from..to", content, scroll)
     commit_dialog: Option<String>,             // commit message input
-    branch_dialog: Option<String>,              // branch name input
-    rename_dialog: Option<(String, String)>, // (old_name, new_name being typed)
+    branch_dialog: Option<String>,             // branch name input
+    rename_dialog: Option<(String, String)>,   // (old_name, new_name being typed)
     reset_dialog: Option<(String, String, bool)>, // (mode, path, selecting_mode)
     pending_checkout: Option<(String, bool)>, // (branch name, is_remote) waiting for stash confirmation
-    gitignore_popup: Option<(String, u16)>, // (content, scroll)
+    gitignore_popup: Option<(String, u16)>,   // (content, scroll)
     merge_dialog: Option<(String, MergePreview)>, // (branch, preview)
     help_overlay: HelpOverlay,
 }
@@ -82,6 +89,7 @@ impl App {
         let repo = Repository::open(repo_path)?;
         let config_file = ConfigFile::load()?;
         let keymap = KeymapManager::new(&config_file.config);
+        let layout = LayoutState::load(&repo, &config_file.config.layout);
         let styles = Styles::default();
         let filelist = FileListPanel::new(repo_path, &styles);
         let branch_panel = BranchPanel::new(repo_path, &styles);
@@ -95,12 +103,15 @@ impl App {
         let notifications = NotificationManager::new();
         let help_overlay = HelpOverlay::new(&styles);
 
-        Ok(Self {
+        let view = Self::view_for_pane(layout.active_pane());
+
+        let mut app = Self {
             repo_path: repo_path.to_path_buf(),
             repo,
             config_file,
             keymap,
-            view: View::Main,
+            layout,
+            view,
             mode: Mode::Normal,
             styles,
             should_quit: false,
@@ -124,7 +135,9 @@ impl App {
             gitignore_popup: None,
             merge_dialog: None,
             help_overlay,
-        })
+        };
+        app.switch_view(app.view.clone());
+        Ok(app)
     }
 
     pub fn run(
@@ -323,7 +336,11 @@ impl App {
                 KeyCode::Char('s') | KeyCode::Enter => {
                     if let Some((name, is_remote)) = self.pending_checkout.take() {
                         // Smart Checkout: shelve → checkout → unshelve
-                        let shelve_name = format!("smart-checkout-{}-{}", name.replace('/', "-"), std::process::id());
+                        let shelve_name = format!(
+                            "smart-checkout-{}-{}",
+                            name.replace('/', "-"),
+                            std::process::id()
+                        );
 
                         match self.repo.shelve_create(&shelve_name, true) {
                             Ok(_) => {
@@ -346,12 +363,14 @@ impl App {
                                         self.refresh_all();
                                     }
                                     Err(e) => {
-                                        self.notifications.notify_error(&format!("Checkout failed: {}", e));
+                                        self.notifications
+                                            .notify_error(&format!("Checkout failed: {}", e));
                                     }
                                 }
                             }
                             Err(e) => {
-                                self.notifications.notify_error(&format!("Shelve failed: {}", e));
+                                self.notifications
+                                    .notify_error(&format!("Shelve failed: {}", e));
                             }
                         }
                     }
@@ -361,11 +380,15 @@ impl App {
                         // Force Checkout: discard local changes and checkout
                         match self.repo.checkout_force(&name) {
                             Ok(_) => {
-                                self.notifications.notify(&format!("Force checkout: switched to {} (local changes discarded)", name));
+                                self.notifications.notify(&format!(
+                                    "Force checkout: switched to {} (local changes discarded)",
+                                    name
+                                ));
                                 self.refresh_all();
                             }
                             Err(e) => {
-                                self.notifications.notify_error(&format!("Force checkout failed: {}", e));
+                                self.notifications
+                                    .notify_error(&format!("Force checkout failed: {}", e));
                             }
                         }
                     }
@@ -387,7 +410,8 @@ impl App {
                     if let Some((branch, _)) = self.merge_dialog.take() {
                         match self.repo.smart_merge(&branch, MergeStrategy::FastForward) {
                             Ok(output) => {
-                                self.notifications.notify(&format!("Merged: {} {}", branch, output));
+                                self.notifications
+                                    .notify(&format!("Merged: {} {}", branch, output));
                                 self.refresh_all();
                             }
                             Err(e) => {
@@ -401,7 +425,8 @@ impl App {
                     if let Some((branch, _)) = self.merge_dialog.take() {
                         match self.repo.smart_merge(&branch, MergeStrategy::NoFastForward) {
                             Ok(output) => {
-                                self.notifications.notify(&format!("Merged (no-ff): {} {}", branch, output));
+                                self.notifications
+                                    .notify(&format!("Merged (no-ff): {} {}", branch, output));
                                 self.refresh_all();
                             }
                             Err(e) => {
@@ -415,7 +440,8 @@ impl App {
                     if let Some((branch, _)) = self.merge_dialog.take() {
                         match self.repo.smart_merge(&branch, MergeStrategy::Squash) {
                             Ok(output) => {
-                                self.notifications.notify(&format!("Squash merged: {} {}", branch, output));
+                                self.notifications
+                                    .notify(&format!("Squash merged: {} {}", branch, output));
                                 self.refresh_all();
                             }
                             Err(e) => {
@@ -450,8 +476,15 @@ impl App {
             self.mode = Mode::Normal;
         }
 
+        if key.code == KeyCode::Esc && self.mode != Mode::Normal {
+            self.dispatch(Action::EnterNormalMode);
+            return;
+        }
+
         match self.view {
-            View::Main => self.handle_main_key(key),
+            View::Main => {
+                self.handle_main_key(key);
+            }
             View::Branches => {
                 if let Some(action) = self.keymap.resolve(KeyContext::Branches, key) {
                     self.dispatch(action);
@@ -497,26 +530,30 @@ impl App {
             View::Console => {
                 if let Some(action) = self.keymap.resolve(KeyContext::Console, key) {
                     self.dispatch(action);
-                } else {
-                    self.console_panel.handle_key(key);
+                } else if let Some(action) = self.console_panel.handle_key(key) {
+                    self.dispatch(action);
                 }
             }
         }
     }
 
-    fn handle_main_key(&mut self, key: KeyEvent) {
+    fn handle_main_key(&mut self, key: KeyEvent) -> bool {
         if let Some(action) = self.keymap.resolve(KeyContext::Main, key) {
             self.dispatch(action);
-            return;
+            return true;
         }
 
         match key.code {
             KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('k') | KeyCode::Up => {
                 self.filelist.handle_key(key);
+                true
             }
             _ => {
                 if let Some(action) = self.filelist.handle_key(key) {
                     self.dispatch(action);
+                    true
+                } else {
+                    false
                 }
             }
         }
@@ -574,10 +611,16 @@ impl App {
             let parts: Vec<&str> = args.split_whitespace().collect();
             let (mode, path) = match parts.as_slice() {
                 [] => ("mixed".to_string(), "".to_string()),
-                [m] if *m == "soft" || *m == "hard" || *m == "mixed" => (m.to_string(), "".to_string()),
+                [m] if *m == "soft" || *m == "hard" || *m == "mixed" => {
+                    (m.to_string(), "".to_string())
+                }
                 [p] => ("mixed".to_string(), p.to_string()),
-                [m, p] if *m == "soft" || *m == "hard" || *m == "mixed" => (m.to_string(), p.to_string()),
-                [p, m] if *m == "soft" || *m == "hard" || *m == "mixed" => (m.to_string(), p.to_string()),
+                [m, p] if *m == "soft" || *m == "hard" || *m == "mixed" => {
+                    (m.to_string(), p.to_string())
+                }
+                [p, m] if *m == "soft" || *m == "hard" || *m == "mixed" => {
+                    (m.to_string(), p.to_string())
+                }
                 _ => ("mixed".to_string(), args.trim().to_string()),
             };
             self.dispatch(Action::Reset(mode, path));
@@ -594,7 +637,8 @@ impl App {
                 if parts.len() == 2 {
                     format!("{}..{}", parts[0], parts[1])
                 } else {
-                    self.notifications.notify_error("Usage: :diff <ref1> <ref2> or :diff <ref1>..<ref2>");
+                    self.notifications
+                        .notify_error("Usage: :diff <ref1> <ref2> or :diff <ref1>..<ref2>");
                     return;
                 }
             };
@@ -606,9 +650,13 @@ impl App {
         if let Some(args) = cmd.strip_prefix(":rename-branch ") {
             let parts: Vec<&str> = args.split_whitespace().collect();
             if parts.len() == 2 {
-                self.dispatch(Action::RenameBranch(parts[0].to_string(), parts[1].to_string()));
+                self.dispatch(Action::RenameBranch(
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                ));
             } else {
-                self.notifications.notify_error("Usage: :rename-branch <old_name> <new_name>");
+                self.notifications
+                    .notify_error("Usage: :rename-branch <old_name> <new_name>");
             }
             return;
         }
@@ -621,7 +669,8 @@ impl App {
                 let branch = if parts.len() > 1 { parts[1] } else { "HEAD" };
                 self.dispatch(Action::CreateWorktree(path, branch.to_string()));
             } else {
-                self.notifications.notify_error("Usage: :worktree add <path> <branch>");
+                self.notifications
+                    .notify_error("Usage: :worktree add <path> <branch>");
             }
             return;
         }
@@ -632,7 +681,8 @@ impl App {
             if !path.is_empty() {
                 self.dispatch(Action::RemoveWorktree(path.to_string()));
             } else {
-                self.notifications.notify_error("Usage: :worktree remove <path>");
+                self.notifications
+                    .notify_error("Usage: :worktree remove <path>");
             }
             return;
         }
@@ -649,7 +699,8 @@ impl App {
             if !pattern.is_empty() {
                 self.dispatch(Action::GitignoreAdd(pattern.to_string()));
             } else {
-                self.notifications.notify_error("Usage: :ignore-add <pattern>");
+                self.notifications
+                    .notify_error("Usage: :ignore-add <pattern>");
             }
             return;
         }
@@ -660,7 +711,8 @@ impl App {
             if !pattern.is_empty() {
                 self.dispatch(Action::GitignoreRemove(pattern.to_string()));
             } else {
-                self.notifications.notify_error("Usage: :ignore-remove <pattern>");
+                self.notifications
+                    .notify_error("Usage: :ignore-remove <pattern>");
             }
             return;
         }
@@ -676,7 +728,8 @@ impl App {
             return;
         }
         if cmd == ":keymap" {
-            self.notifications.notify(&format!("Current keymap: {}", self.keymap.preset_name()));
+            self.notifications
+                .notify(&format!("Current keymap: {}", self.keymap.preset_name()));
             return;
         }
 
@@ -716,7 +769,8 @@ impl App {
             }
             "" => return,
             _ => {
-                self.notifications.notify_error(&format!("Unknown command: {}", cmd));
+                self.notifications
+                    .notify_error(&format!("Unknown command: {}", cmd));
                 return;
             }
         };
@@ -724,7 +778,6 @@ impl App {
     }
 
     fn switch_view(&mut self, view: View) {
-
         // Blur current panels
         self.filelist.blur();
         self.branch_panel.blur();
@@ -732,7 +785,10 @@ impl App {
         self.stash_panel.blur();
         self.remote_panel.blur();
         self.shelve_panel.blur();
+        self.rebase_panel.blur();
+        self.console_panel.blur();
 
+        self.layout.set_active(Self::pane_for_view(&view));
         self.view = view.clone();
         match &self.view {
             View::Main => {
@@ -771,33 +827,131 @@ impl App {
                 self.mode = Mode::Command;
                 self.cmdline.open();
             }
+            Action::EnterNormalMode => {
+                self.mode = Mode::Normal;
+                self.notifications.notify("Switched to normal mode");
+            }
+            Action::EnterEditMode => {
+                self.mode = Mode::Edit;
+                self.notifications.notify("Switched to edit mode");
+            }
+            Action::EnterVisualMode => {
+                self.mode = Mode::Visual;
+                self.notifications.notify("Switched to visual mode");
+            }
+            Action::HideActivePane => {
+                if self.mode != Mode::Visual {
+                    self.notifications
+                        .notify_error("Hide pane is only available in visual mode");
+                } else {
+                    let pane = self.layout.active_pane();
+                    if self.layout.hide_pane(pane) {
+                        let next_view = Self::view_for_pane(self.layout.active_pane());
+                        self.switch_view(next_view);
+                        self.notifications
+                            .notify(&format!("Hid {} pane", pane.label()));
+                    } else {
+                        self.notifications
+                            .notify_error("Cannot hide the last visible pane");
+                    }
+                }
+            }
+            Action::ShowAllPanes => {
+                self.layout.show_all_panes();
+                self.layout.show_pane(Self::pane_for_view(&self.view));
+                self.switch_view(Self::view_for_pane(self.layout.active_pane()));
+                self.notifications.notify("Showed all panes");
+            }
             Action::BackToMain => {
-                self.switch_view(View::Main);
+                self.reveal_pane(PaneId::Files);
             }
             Action::NextView => {
-                self.switch_view(Self::next_view(&self.view));
+                self.layout.next_pane();
+                self.switch_view(Self::view_for_pane(self.layout.active_pane()));
             }
             Action::PrevView => {
-                self.switch_view(Self::prev_view(&self.view));
+                self.layout.prev_pane();
+                self.switch_view(Self::view_for_pane(self.layout.active_pane()));
+            }
+            Action::ShowFilesPanel => {
+                self.reveal_pane(PaneId::Files);
             }
             Action::ShowBranchPanel => {
-                self.switch_view(View::Branches);
+                self.reveal_pane(PaneId::Branches);
             }
             Action::ShowLogPanel => {
-                self.switch_view(View::Log);
+                self.reveal_pane(PaneId::Log);
             }
             Action::ShowConsolePanel => {
                 self.console_panel.refresh();
-                self.switch_view(View::Console);
+                self.reveal_pane(PaneId::Console);
             }
             Action::ShowStashPanel => {
-                self.switch_view(View::Stash);
+                self.reveal_pane(PaneId::Stash);
             }
             Action::ShowRemotePanel => {
-                self.switch_view(View::Remote);
+                self.reveal_pane(PaneId::Remote);
+            }
+            Action::ShowRebasePanel => {
+                self.reveal_pane(PaneId::Rebase);
             }
             Action::ShowShelvePanel => {
-                self.switch_view(View::Shelve);
+                self.reveal_pane(PaneId::Shelve);
+            }
+            Action::GrowPaneWidth => {
+                if self.mode == Mode::Edit {
+                    self.layout.grow_width();
+                }
+            }
+            Action::ShrinkPaneWidth => {
+                if self.mode == Mode::Edit {
+                    self.layout.shrink_width();
+                }
+            }
+            Action::GrowPaneHeight => {
+                if self.mode == Mode::Edit {
+                    self.layout.grow_height();
+                }
+            }
+            Action::ShrinkPaneHeight => {
+                if self.mode == Mode::Edit {
+                    self.layout.shrink_height();
+                }
+            }
+            Action::ResetLayout => {
+                if self.mode == Mode::Edit {
+                    match self.layout.clear_local(&self.repo) {
+                        Ok(_) => {
+                            self.layout =
+                                LayoutState::load(&self.repo, &self.config_file.config.layout);
+                            self.switch_view(Self::view_for_pane(self.layout.active_pane()));
+                            self.notifications.notify("Reset layout to saved default");
+                        }
+                        Err(e) => self
+                            .notifications
+                            .notify_error(&format!("Failed to reset layout: {}", e)),
+                    }
+                }
+            }
+            Action::SaveLayoutLocal => {
+                if self.mode == Mode::Edit {
+                    match self.layout.persist_local(&self.repo) {
+                        Ok(_) => self.notifications.notify("Saved layout to .git/config"),
+                        Err(e) => self
+                            .notifications
+                            .notify_error(&format!("Failed to save layout locally: {}", e)),
+                    }
+                }
+            }
+            Action::SaveLayoutGlobal => {
+                if self.mode == Mode::Edit {
+                    match self.layout.persist_global(&mut self.config_file) {
+                        Ok(_) => self.notifications.notify("Saved layout to global config"),
+                        Err(e) => self
+                            .notifications
+                            .notify_error(&format!("Failed to save layout globally: {}", e)),
+                    }
+                }
             }
             Action::Stage => {
                 self.dispatch_stage();
@@ -869,7 +1023,8 @@ impl App {
             },
             Action::Reset(mode, path) => match self.repo.reset(&mode, &path) {
                 Ok(_) => {
-                    self.console_panel.record("Reset", &format!("{} {}", mode, path), "ok");
+                    self.console_panel
+                        .record("Reset", &format!("{} {}", mode, path), "ok");
                     let msg = if path.is_empty() {
                         format!("Reset {} (whole repo)", mode)
                     } else {
@@ -996,7 +1151,8 @@ impl App {
                     self.merge_dialog = None;
                     match self.repo.smart_merge(&name, MergeStrategy::FastForward) {
                         Ok(output) => {
-                            self.notifications.notify(&format!("Merged: {} {}", name, output));
+                            self.notifications
+                                .notify(&format!("Merged: {} {}", name, output));
                             self.refresh_all();
                         }
                         Err(e) => {
@@ -1083,31 +1239,32 @@ impl App {
                         self.notifications
                             .notify(&format!("Copied: {}", &hash[..7.min(hash.len())]));
                     } else {
-                        self.notifications.notify_error("Failed to copy to clipboard");
+                        self.notifications
+                            .notify_error("Failed to copy to clipboard");
                     }
                 } else {
-                    self.notifications.notify_error("Failed to access clipboard");
+                    self.notifications
+                        .notify_error("Failed to access clipboard");
                 }
             }
             Action::SearchLog(_query) => {
                 // Handled by log panel directly
             }
-            Action::ShowTags => {
-                match self.repo.tag_list() {
-                    Ok(tags) => {
-                        if tags.is_empty() {
-                            self.notifications.notify("No tags found");
-                        } else {
-                            let tag_names: Vec<String> = tags.iter().map(|t| t.name.clone()).collect();
-                            self.notifications.notify(&format!("Tags: {}", tag_names.join(", ")));
-                        }
-                    }
-                    Err(e) => {
+            Action::ShowTags => match self.repo.tag_list() {
+                Ok(tags) => {
+                    if tags.is_empty() {
+                        self.notifications.notify("No tags found");
+                    } else {
+                        let tag_names: Vec<String> = tags.iter().map(|t| t.name.clone()).collect();
                         self.notifications
-                            .notify_error(&format!("Failed to list tags: {}", e));
+                            .notify(&format!("Tags: {}", tag_names.join(", ")));
                     }
                 }
-            }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to list tags: {}", e));
+                }
+            },
             Action::CreateTag(name) => match self.repo.tag_create(&name, "", None) {
                 Ok(_) => {
                     self.notifications.notify(&format!("Created tag: {}", name));
@@ -1140,7 +1297,8 @@ impl App {
             },
             Action::StashPop(index) => match self.repo.stash_pop(index) {
                 Ok(_) => {
-                    self.console_panel.record("Stash Pop", &format!("#{}", index), "ok");
+                    self.console_panel
+                        .record("Stash Pop", &format!("#{}", index), "ok");
                     self.notifications
                         .notify(&format!("Stash@{} popped", index));
                     self.refresh_all();
@@ -1204,16 +1362,19 @@ impl App {
                         .notify_error(&format!("Shelve create failed: {}", e));
                 }
             },
-            Action::ShelveCreate(name, include_staged) => match self.repo.shelve_create(&name, include_staged) {
-                Ok(_) => {
-                    self.notifications.notify(&format!("Shelve created: {}", name));
-                    self.refresh_all();
+            Action::ShelveCreate(name, include_staged) => {
+                match self.repo.shelve_create(&name, include_staged) {
+                    Ok(_) => {
+                        self.notifications
+                            .notify(&format!("Shelve created: {}", name));
+                        self.refresh_all();
+                    }
+                    Err(e) => {
+                        self.notifications
+                            .notify_error(&format!("Shelve create failed: {}", e));
+                    }
                 }
-                Err(e) => {
-                    self.notifications
-                        .notify_error(&format!("Shelve create failed: {}", e));
-                }
-            },
+            }
             Action::ShelveApply(index, pop) => {
                 let cmd_name = if pop { "popped" } else { "applied" };
                 match self.repo.shelve_apply(index, pop) {
@@ -1255,15 +1416,18 @@ impl App {
             }
             Action::RenameBranch(old_name, new_name) => {
                 if new_name.is_empty() {
-                    self.notifications.notify_error("New branch name cannot be empty");
+                    self.notifications
+                        .notify_error("New branch name cannot be empty");
                 } else {
                     match self.repo.rename_branch(&old_name, &new_name) {
                         Ok(_) => {
-                            self.notifications.notify(&format!("Renamed branch: {} -> {}", old_name, new_name));
+                            self.notifications
+                                .notify(&format!("Renamed branch: {} -> {}", old_name, new_name));
                             self.refresh_all();
                         }
                         Err(e) => {
-                            self.notifications.notify_error(&format!("Rename failed: {}", e));
+                            self.notifications
+                                .notify_error(&format!("Rename failed: {}", e));
                         }
                     }
                 }
@@ -1272,182 +1436,191 @@ impl App {
                 // range format is "from..to"
                 let parts: Vec<&str> = range.split("..").collect();
                 if parts.len() == 2 {
-                    let content = self.repo.diff_refs(parts[0], parts[1])
+                    let content = self
+                        .repo
+                        .diff_refs(parts[0], parts[1])
                         .unwrap_or_else(|e| format!("Error: {}", e));
                     self.ref_diff_popup = Some((range, content, 0));
                 } else {
-                    self.notifications.notify_error("Invalid ref range format. Use: from..to");
+                    self.notifications
+                        .notify_error("Invalid ref range format. Use: from..to");
                 }
             }
-            Action::ShowWorktrees => {
-                match self.repo.worktree_list() {
-                    Ok(worktrees) => {
-                        if worktrees.is_empty() {
-                            self.notifications.notify("No worktrees found");
-                        } else {
-                            let info: Vec<String> = worktrees.iter().map(|w| {
+            Action::ShowWorktrees => match self.repo.worktree_list() {
+                Ok(worktrees) => {
+                    if worktrees.is_empty() {
+                        self.notifications.notify("No worktrees found");
+                    } else {
+                        let info: Vec<String> = worktrees
+                            .iter()
+                            .map(|w| {
                                 let branch = w.branch.as_deref().unwrap_or("(detached)");
                                 if w.is_main {
                                     format!("{} (main, branch: {})", w.path, branch)
                                 } else {
                                     format!("{} (branch: {})", w.path, branch)
                                 }
-                            }).collect();
-                            self.notifications.notify(&format!("Worktrees: {}", info.join("; ")));
-                        }
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to list worktrees: {}", e));
+                            })
+                            .collect();
+                        self.notifications
+                            .notify(&format!("Worktrees: {}", info.join("; ")));
                     }
                 }
-            }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to list worktrees: {}", e));
+                }
+            },
             Action::CreateWorktree(path, branch) => {
                 match self.repo.worktree_create(&path, &branch) {
                     Ok(_) => {
-                        self.notifications.notify(&format!("Created worktree: {} ({})", path, branch));
+                        self.notifications
+                            .notify(&format!("Created worktree: {} ({})", path, branch));
                         self.refresh_all();
                     }
                     Err(e) => {
-                        self.notifications.notify_error(&format!("Create worktree failed: {}", e));
+                        self.notifications
+                            .notify_error(&format!("Create worktree failed: {}", e));
                     }
                 }
             }
-            Action::RemoveWorktree(path) => {
-                match self.repo.worktree_remove(&path) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Removed worktree: {}", path));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Remove worktree failed: {}", e));
+            Action::RemoveWorktree(path) => match self.repo.worktree_remove(&path) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Removed worktree: {}", path));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Remove worktree failed: {}", e));
+                }
+            },
+            Action::PullRebase => match self.repo.pull_rebase_current() {
+                Ok(_) => {
+                    self.console_panel.record("Pull Rebase", "", "ok");
+                    self.notifications.notify("Pulled with rebase successfully");
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Pull rebase failed: {}", e));
+                }
+            },
+            Action::ShowGitignore => match self.repo.gitignore_read() {
+                Ok(content) => {
+                    if content.is_empty() {
+                        self.notifications
+                            .notify(".gitignore is empty or does not exist");
+                    } else {
+                        self.gitignore_popup = Some((content, 0));
                     }
                 }
-            }
-            Action::PullRebase => {
-                match self.repo.pull_rebase_current() {
-                    Ok(_) => {
-                        self.console_panel.record("Pull Rebase", "", "ok");
-                        self.notifications.notify("Pulled with rebase successfully");
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Pull rebase failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to read .gitignore: {}", e));
                 }
-            }
-            Action::ShowGitignore => {
-                match self.repo.gitignore_read() {
-                    Ok(content) => {
-                        if content.is_empty() {
-                            self.notifications.notify(".gitignore is empty or does not exist");
-                        } else {
-                            self.gitignore_popup = Some((content, 0));
-                        }
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to read .gitignore: {}", e));
-                    }
+            },
+            Action::GitignoreAdd(pattern) => match self.repo.gitignore_add(&pattern) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Added to .gitignore: {}", pattern));
+                    self.refresh_all();
                 }
-            }
-            Action::GitignoreAdd(pattern) => {
-                match self.repo.gitignore_add(&pattern) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Added to .gitignore: {}", pattern));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to add to .gitignore: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to add to .gitignore: {}", e));
                 }
-            }
-            Action::GitignoreRemove(pattern) => {
-                match self.repo.gitignore_remove(&pattern) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Removed from .gitignore: {}", pattern));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to remove from .gitignore: {}", e));
-                    }
+            },
+            Action::GitignoreRemove(pattern) => match self.repo.gitignore_remove(&pattern) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Removed from .gitignore: {}", pattern));
+                    self.refresh_all();
                 }
-            }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to remove from .gitignore: {}", e));
+                }
+            },
             Action::SetKeymapPreset(preset) => {
                 self.keymap.set_preset(preset);
                 self.config_file.config.keymap.preset = preset;
                 if let Err(e) = self.config_file.save() {
-                    self.notifications.notify_error(&format!("Failed to save keymap preset: {}", e));
+                    self.notifications
+                        .notify_error(&format!("Failed to save keymap preset: {}", e));
                 } else {
-                    self.notifications.notify(&format!("Keymap preset switched to {}", preset.as_str()));
+                    self.notifications
+                        .notify(&format!("Keymap preset switched to {}", preset.as_str()));
                 }
             }
-            Action::Undo => {
-                match self.repo.undo() {
-                    Ok(msg) => {
-                        self.console_panel.record("Undo", &msg, "ok");
-                        self.notifications.notify(&format!("Undo: {}", msg));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Undo failed: {}", e));
-                    }
+            Action::Undo => match self.repo.undo() {
+                Ok(msg) => {
+                    self.console_panel.record("Undo", &msg, "ok");
+                    self.notifications.notify(&format!("Undo: {}", msg));
+                    self.refresh_all();
                 }
-            }
-            Action::Revert(hash) => {
-                match self.repo.revert(&hash) {
-                    Ok(_) => {
-                        self.console_panel.record("Revert", &hash[..7.min(hash.len())], "ok");
-                        self.notifications.notify(&format!("Reverted {}", &hash[..7.min(hash.len())]));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Revert failed: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Undo failed: {}", e));
                 }
-            }
-            Action::AddRemote(name, url) => {
-                match self.repo.add_remote(&name, &url) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Added remote: {} -> {}", name, url));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to add remote: {}", e));
-                    }
+            },
+            Action::Revert(hash) => match self.repo.revert(&hash) {
+                Ok(_) => {
+                    self.console_panel
+                        .record("Revert", &hash[..7.min(hash.len())], "ok");
+                    self.notifications
+                        .notify(&format!("Reverted {}", &hash[..7.min(hash.len())]));
+                    self.refresh_all();
                 }
-            }
-            Action::RemoveRemote(name) => {
-                match self.repo.remove_remote(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Removed remote: {}", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to remove remote: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Revert failed: {}", e));
                 }
-            }
-            Action::RenameRemote(old, new) => {
-                match self.repo.rename_remote(&old, &new) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Renamed remote: {} -> {}", old, new));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to rename remote: {}", e));
-                    }
+            },
+            Action::AddRemote(name, url) => match self.repo.add_remote(&name, &url) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Added remote: {} -> {}", name, url));
+                    self.refresh_all();
                 }
-            }
-            Action::FetchRemote(name) => {
-                match self.repo.fetch_remote(&name) {
-                    Ok(_) => {
-                        self.notifications.notify(&format!("Fetched remote: {}", name));
-                        self.refresh_all();
-                    }
-                    Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to fetch remote: {}", e));
-                    }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to add remote: {}", e));
                 }
-            }
+            },
+            Action::RemoveRemote(name) => match self.repo.remove_remote(&name) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Removed remote: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to remove remote: {}", e));
+                }
+            },
+            Action::RenameRemote(old, new) => match self.repo.rename_remote(&old, &new) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Renamed remote: {} -> {}", old, new));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to rename remote: {}", e));
+                }
+            },
+            Action::FetchRemote(name) => match self.repo.fetch_remote(&name) {
+                Ok(_) => {
+                    self.notifications
+                        .notify(&format!("Fetched remote: {}", name));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Failed to fetch remote: {}", e));
+                }
+            },
             Action::StartRebase(upstream) => {
                 self.rebase_panel.load_todos(&self.repo, &upstream);
                 self.switch_view(View::Rebase);
@@ -1460,7 +1633,8 @@ impl App {
                         self.refresh_all();
                     }
                     Err(e) => {
-                        self.notifications.notify_error(&format!("Rebase failed: {}", e));
+                        self.notifications
+                            .notify_error(&format!("Rebase failed: {}", e));
                     }
                 }
             }
@@ -1474,14 +1648,17 @@ impl App {
                             .map(|b| b.name.clone())
                             .collect();
                         if remote_branches.is_empty() {
-                            self.notifications.notify(&format!("No branches found on remote: {}", name));
+                            self.notifications
+                                .notify(&format!("No branches found on remote: {}", name));
                         } else {
                             let branch_list = remote_branches.join(", ");
-                            self.notifications.notify(&format!("{} branches: {}", name, branch_list));
+                            self.notifications
+                                .notify(&format!("{} branches: {}", name, branch_list));
                         }
                     }
                     Err(e) => {
-                        self.notifications.notify_error(&format!("Failed to list branches: {}", e));
+                        self.notifications
+                            .notify_error(&format!("Failed to list branches: {}", e));
                     }
                 }
             }
@@ -1535,7 +1712,9 @@ impl App {
 
     /// Handle popup scroll keys. Returns true if the key was handled.
     fn handle_popup_scroll(scroll: Option<&mut u16>, code: KeyCode) -> bool {
-        let Some(scroll) = scroll else { return false; };
+        let Some(scroll) = scroll else {
+            return false;
+        };
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
                 *scroll = scroll.saturating_add(1);
@@ -1565,7 +1744,6 @@ impl App {
         }
     }
 
-
     fn next_view(view: &View) -> View {
         match view {
             View::Main => View::Branches,
@@ -1592,6 +1770,37 @@ impl App {
         }
     }
 
+    fn view_for_pane(pane: PaneId) -> View {
+        match pane {
+            PaneId::Files => View::Main,
+            PaneId::Branches => View::Branches,
+            PaneId::Stash => View::Stash,
+            PaneId::Log => View::Log,
+            PaneId::Rebase => View::Rebase,
+            PaneId::Remote => View::Remote,
+            PaneId::Shelve => View::Shelve,
+            PaneId::Console => View::Console,
+        }
+    }
+
+    fn pane_for_view(view: &View) -> PaneId {
+        match view {
+            View::Main => PaneId::Files,
+            View::Branches => PaneId::Branches,
+            View::Log => PaneId::Log,
+            View::Rebase => PaneId::Rebase,
+            View::Console => PaneId::Console,
+            View::Stash => PaneId::Stash,
+            View::Remote => PaneId::Remote,
+            View::Shelve => PaneId::Shelve,
+        }
+    }
+
+    fn reveal_pane(&mut self, pane: PaneId) {
+        self.layout.show_pane(pane);
+        self.switch_view(Self::view_for_pane(pane));
+    }
+
     fn refresh_all(&mut self) {
         self.filelist.refresh();
         self.branch_panel.refresh();
@@ -1609,7 +1818,7 @@ impl App {
         f.render_widget(bg, size);
 
         // Reserve bottom row for command line when visible
-        let view_area = if self.cmdline.is_visible() {
+        let body_area = if self.cmdline.is_visible() {
             Rect {
                 height: size.height.saturating_sub(1),
                 ..size
@@ -1618,16 +1827,18 @@ impl App {
             size
         };
 
-        match self.view {
-            View::Main => self.draw_main(f, view_area),
-            View::Branches => self.branch_panel.render(f, view_area),
-            View::Log => self.log_panel.render(f, view_area),
-            View::Stash => self.stash_panel.render(f, view_area),
-            View::Remote => self.remote_panel.render(f, view_area),
-            View::Rebase => self.rebase_panel.render(f, view_area),
-            View::Shelve => self.shelve_panel.render(f, view_area),
-            View::Console => self.console_panel.render(f, view_area),
-        }
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(8),
+                Constraint::Length(1),
+            ])
+            .split(body_area);
+
+        self.draw_status_bar(f, chunks[0]);
+        self.draw_tiled_layout(f, chunks[1]);
+        self.draw_footer(f, chunks[2]);
 
         // Command line at bottom
         if self.cmdline.is_visible() {
@@ -1689,67 +1900,177 @@ impl App {
         self.notifications.render(f, size);
 
         // Help overlay on top of everything
-        self.help_overlay.render(f, size, &self.keymap, &self.view, &self.mode);
+        self.help_overlay
+            .render(f, size, &self.keymap, &self.view, &self.mode);
     }
 
-    fn draw_main(&mut self, f: &mut Frame, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // Status bar
-                Constraint::Min(5),    // File list
-                Constraint::Length(1), // Sidebar help
-            ])
-            .split(area);
+    fn draw_status_bar(&self, f: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
 
-        // Status bar
         let branch = self.repo.current_branch().unwrap_or_default();
-        let status_bar = Paragraph::new(Line::from(vec![
+        let mut spans = vec![
             Span::styled(
                 format!(" {} ", branch),
                 self.styles.addition.add_modifier(Modifier::BOLD),
             ),
             Span::styled(" cogit ", self.styles.text_secondary),
-        ]))
-        .style(Style::default().bg(ratatui::style::Color::DarkGray));
-        f.render_widget(status_bar, chunks[0]);
+            Span::styled(
+                format!(" mode:{} ", Self::mode_label(&self.mode)),
+                self.styles.highlight.add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" active:{} ", self.layout.active_label()),
+                self.styles.text_primary,
+            ),
+        ];
+        if let Some(shortcuts) = Self::mode_shortcuts(&self.keymap) {
+            spans.push(Span::styled(
+                format!(" {} ", shortcuts),
+                self.styles.text_secondary,
+            ));
+        }
+        if let Some(shortcuts) = Self::status_bar_layout_shortcuts(&self.keymap) {
+            spans.push(Span::styled(
+                format!(" {} ", shortcuts),
+                self.styles.text_secondary,
+            ));
+        }
+        let status_bar = Paragraph::new(Line::from(spans))
+            .style(Style::default().bg(ratatui::style::Color::DarkGray));
+        f.render_widget(status_bar, area);
+    }
 
-        // File list
-        self.filelist.focus();
-        self.filelist.render(f, chunks[1]);
-        // Build footer hints dynamically from keymap
-        let mut footer_parts: Vec<String> = Vec::new();
+    fn draw_tiled_layout(&mut self, f: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let rects = self.layout.pane_rects(area);
+        for pane in PaneId::ALL {
+            let rect = rects[pane.index()];
+            if rect.width < 12 || rect.height < 4 {
+                continue;
+            }
+            self.render_pane(f, pane, rect);
+        }
+    }
+
+    fn draw_footer(&self, f: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let mut footer_parts: Vec<String> = vec![
+            format!("[mode:{}]", Self::mode_label(&self.mode)),
+            format!("[active:{}]", self.layout.active_label()),
+            format!("[keymap:{}]", self.keymap.preset_name()),
+        ];
         for hint in self.keymap.bindings_for(KeyContext::Global) {
             footer_parts.push(format!("{}:{}", hint.key, hint.description));
         }
-        footer_parts.push(format!("[keymap:{}]", self.keymap.preset_name()));
+        for hint in self
+            .keymap
+            .bindings_for(Self::key_context_for_view(&self.view))
+        {
+            footer_parts.push(format!("{}:{}", hint.key, hint.description));
+        }
         let help = Paragraph::new(format!(" {}", footer_parts.join("  ")))
-        .style(self.styles.text_secondary);
-        f.render_widget(help, chunks[2]);
+            .style(self.styles.text_secondary);
+        f.render_widget(help, area);
+    }
+
+    fn mode_label(mode: &Mode) -> &'static str {
+        match mode {
+            Mode::Normal => "NORMAL",
+            Mode::Edit => "EDIT",
+            Mode::Visual => "VISUAL",
+            Mode::Command => "COMMAND",
+        }
+    }
+
+    fn mode_shortcuts(keymap: &KeymapManager) -> Option<String> {
+        let normal = keymap.binding_key(KeyContext::Global, "mode_normal");
+        let edit = keymap.binding_key(KeyContext::Global, "mode_edit");
+        let visual = keymap.binding_key(KeyContext::Global, "mode_visual");
+
+        match (normal, edit, visual) {
+            (Some(normal), Some(edit), Some(visual)) => Some(format!(
+                "modes:{normal} normal / {edit} edit / {visual} visual"
+            )),
+            _ => None,
+        }
+    }
+
+    fn status_bar_layout_shortcuts(keymap: &KeymapManager) -> Option<String> {
+        let local = keymap.binding_key(KeyContext::Global, "save_layout_local");
+        let global = keymap.binding_key(KeyContext::Global, "save_layout_global");
+        let reset = keymap.binding_key(KeyContext::Global, "reset_layout");
+
+        let mut parts = Vec::new();
+        if let Some(local) = local {
+            parts.push(format!("save:{} local", local));
+        }
+        if let Some(global) = global {
+            if parts.is_empty() {
+                parts.push(format!("save:{} global", global));
+            } else {
+                parts.push(format!("{} global", global));
+            }
+        }
+        if let Some(reset) = reset {
+            parts.push(format!("{} reset", reset));
+        }
+
+        (!parts.is_empty()).then(|| parts.join(" / "))
+    }
+
+    fn pane_jump_key(keymap: &KeymapManager, pane: PaneId) -> Option<String> {
+        let action_id = match pane {
+            PaneId::Files => "view_files",
+            PaneId::Branches => "view_branches",
+            PaneId::Log => "view_log",
+            PaneId::Console => "view_console",
+            PaneId::Stash => "view_stash",
+            PaneId::Rebase => "view_rebase",
+            PaneId::Remote => "view_remote",
+            PaneId::Shelve => "view_shelve",
+        };
+        keymap.binding_key(KeyContext::Global, action_id)
+    }
+
+    fn render_pane(&mut self, f: &mut Frame, pane: PaneId, area: Rect) {
+        let shortcut = Self::pane_jump_key(&self.keymap, pane);
+        match pane {
+            PaneId::Files => self.filelist.render(f, area, shortcut.as_deref()),
+            PaneId::Branches => self.branch_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Log => self.log_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Rebase => self.rebase_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Console => self.console_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Stash => self.stash_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Remote => self.remote_panel.render(f, area, shortcut.as_deref()),
+            PaneId::Shelve => self.shelve_panel.render(f, area, shortcut.as_deref()),
+        }
+    }
+
+    fn key_context_for_view(view: &View) -> KeyContext {
+        match view {
+            View::Main => KeyContext::Main,
+            View::Branches => KeyContext::Branches,
+            View::Log => KeyContext::Log,
+            View::Stash => KeyContext::Stash,
+            View::Remote => KeyContext::Remote,
+            View::Shelve => KeyContext::Shelve,
+            View::Rebase => KeyContext::Rebase,
+            View::Console => KeyContext::Console,
+        }
     }
 
     fn draw_diff_popup(&self, f: &mut Frame, area: Rect, path: &str, content: &str, scroll: u16) {
-        // Centered popup: 80% width, 80% height
-        let popup_w = (area.width * 4 / 5).max(40);
-        let popup_h = (area.height * 4 / 5).max(10);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        // Clear background
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
-        let inner = Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(3),
-        };
+        let popup_area = centered_popup_area(area, 4, 5, 40, 4, 5, 10);
+        render_popup_background(f, popup_area);
+        let inner = popup_inner_area(popup_area);
 
         // Color diff lines
         let lines: Vec<Line> = content
@@ -1770,12 +2091,11 @@ impl App {
 
         let title = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", path);
         let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(ratatui::style::Color::Yellow)),
-            )
+            .style(popup_style())
+            .block(popup_block(
+                title.as_str(),
+                Style::default().fg(ratatui::style::Color::Yellow),
+            ))
             .scroll((scroll, 0));
 
         f.render_widget(paragraph, inner);
@@ -1851,7 +2171,14 @@ impl App {
             )),
         ];
 
-        self.draw_input_dialog(f, area, 7, " New Branch ", ratatui::style::Color::Cyan, lines);
+        self.draw_input_dialog(
+            f,
+            area,
+            7,
+            " New Branch ",
+            ratatui::style::Color::Cyan,
+            lines,
+        );
     }
 
     fn draw_reset_dialog(&self, f: &mut Frame, area: Rect, reset_state: &(String, String, bool)) {
@@ -1874,16 +2201,30 @@ impl App {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  Mode: ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(
+                    "  Mode: ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
                 if mode.is_empty() {
-                    Span::styled("1:soft  2:hard  3:mixed", Style::default().fg(ratatui::style::Color::Cyan))
+                    Span::styled(
+                        "1:soft  2:hard  3:mixed",
+                        Style::default().fg(ratatui::style::Color::Cyan),
+                    )
                 } else {
-                    Span::styled(mode.as_str(), Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD))
+                    Span::styled(
+                        mode.as_str(),
+                        Style::default()
+                            .fg(ratatui::style::Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
                 },
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("> Path: ", Style::default().fg(ratatui::style::Color::Yellow)),
+                Span::styled(
+                    "> Path: ",
+                    Style::default().fg(ratatui::style::Color::Yellow),
+                ),
                 Span::styled(
                     &path_display,
                     if path.is_empty() {
@@ -1925,32 +2266,93 @@ impl App {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  Branch: ", Style::default().fg(ratatui::style::Color::DarkGray)),
-                Span::styled(branch, Style::default().fg(ratatui::style::Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "  Branch: ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
+                Span::styled(
+                    branch,
+                    Style::default()
+                        .fg(ratatui::style::Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
-                Span::styled("  Commits: ", Style::default().fg(ratatui::style::Color::DarkGray)),
-                Span::styled(preview.commits_count.to_string(), Style::default().fg(ratatui::style::Color::White)),
+                Span::styled(
+                    "  Commits: ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
+                Span::styled(
+                    preview.commits_count.to_string(),
+                    Style::default().fg(ratatui::style::Color::White),
+                ),
             ]),
             Line::from(vec![
-                Span::styled("  Fast-forward: ", Style::default().fg(ratatui::style::Color::DarkGray)),
-                Span::styled(if preview.can_ff { "Yes" } else { "No" },
-                    if preview.can_ff { Style::default().fg(ratatui::style::Color::Green) } else { Style::default().fg(ratatui::style::Color::Yellow) }),
+                Span::styled(
+                    "  Fast-forward: ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
+                Span::styled(
+                    if preview.can_ff { "Yes" } else { "No" },
+                    if preview.can_ff {
+                        Style::default().fg(ratatui::style::Color::Green)
+                    } else {
+                        Style::default().fg(ratatui::style::Color::Yellow)
+                    },
+                ),
             ]),
             Line::from(vec![
-                Span::styled("  Files: ", Style::default().fg(ratatui::style::Color::DarkGray)),
-                Span::styled(files_preview, Style::default().fg(ratatui::style::Color::White)),
+                Span::styled(
+                    "  Files: ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
+                Span::styled(
+                    files_preview,
+                    Style::default().fg(ratatui::style::Color::White),
+                ),
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  f", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
-                Span::styled("=Fast-forward  ", Style::default().fg(ratatui::style::Color::DarkGray)),
-                Span::styled("n", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
-                Span::styled("=No-ff  ", Style::default().fg(ratatui::style::Color::DarkGray)),
-                Span::styled("s", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
-                Span::styled("=Squash  ", Style::default().fg(ratatui::style::Color::DarkGray)),
-                Span::styled("q", Style::default().fg(ratatui::style::Color::Red).add_modifier(Modifier::BOLD)),
-                Span::styled("=Cancel", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(
+                    "  f",
+                    Style::default()
+                        .fg(ratatui::style::Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "=Fast-forward  ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
+                Span::styled(
+                    "n",
+                    Style::default()
+                        .fg(ratatui::style::Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "=No-ff  ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
+                Span::styled(
+                    "s",
+                    Style::default()
+                        .fg(ratatui::style::Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "=Squash  ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
+                Span::styled(
+                    "q",
+                    Style::default()
+                        .fg(ratatui::style::Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "=Cancel",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
             ]),
         ];
 
@@ -1966,29 +2368,69 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
+            Line::from(vec![Span::styled(
+                "  Uncommitted changes detected.",
+                Style::default().fg(ratatui::style::Color::White),
+            )]),
             Line::from(vec![
-                Span::styled("  Uncommitted changes detected.", Style::default().fg(ratatui::style::Color::White)),
-            ]),
-            Line::from(vec![
-                Span::styled("  Target branch: ", Style::default().fg(ratatui::style::Color::DarkGray)),
-                Span::styled(branch, Style::default().fg(ratatui::style::Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "  Target branch: ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
+                Span::styled(
+                    branch,
+                    Style::default()
+                        .fg(ratatui::style::Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  s", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
-                Span::styled("=Smart Checkout (shelve→checkout→unshelve)  ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(
+                    "  s",
+                    Style::default()
+                        .fg(ratatui::style::Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "=Smart Checkout (shelve→checkout→unshelve)  ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
             ]),
             Line::from(vec![
-                Span::styled("  f", Style::default().fg(ratatui::style::Color::Red).add_modifier(Modifier::BOLD)),
-                Span::styled("=Force Checkout (discard local changes)  ", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(
+                    "  f",
+                    Style::default()
+                        .fg(ratatui::style::Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "=Force Checkout (discard local changes)  ",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
             ]),
             Line::from(vec![
-                Span::styled("  q", Style::default().fg(ratatui::style::Color::Gray).add_modifier(Modifier::BOLD)),
-                Span::styled("=Cancel", Style::default().fg(ratatui::style::Color::DarkGray)),
+                Span::styled(
+                    "  q",
+                    Style::default()
+                        .fg(ratatui::style::Color::Gray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "=Cancel",
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ),
             ]),
         ];
 
-        self.draw_input_dialog(f, area, 10, " Checkout ", ratatui::style::Color::Yellow, lines);
+        self.draw_input_dialog(
+            f,
+            area,
+            10,
+            " Checkout ",
+            ratatui::style::Color::Yellow,
+            lines,
+        );
     }
 
     /// Draw a centered input dialog with common styling pattern.
@@ -2002,25 +2444,11 @@ impl App {
         border_color: ratatui::style::Color,
         lines: Vec<Line>,
     ) -> Rect {
-        let popup_w = (area.width * 3 / 5).max(40);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+        let popup_area = centered_popup_area(area, 3, 5, 40, popup_h, area.height.max(1), popup_h);
 
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
+        render_popup_background(f, popup_area);
 
-        let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(border_color)),
-            );
+        let paragraph = input_dialog_widget(title, border_color, lines);
         f.render_widget(paragraph, popup_area);
         popup_area
     }
@@ -2037,7 +2465,12 @@ impl App {
         let lines = vec![
             Line::from(vec![
                 Span::styled("Rename: ", Style::default().fg(ratatui::style::Color::Cyan)),
-                Span::styled(old_name, Style::default().fg(ratatui::style::Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    old_name,
+                    Style::default()
+                        .fg(ratatui::style::Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -2061,29 +2494,27 @@ impl App {
             )),
         ];
 
-        self.draw_input_dialog(f, area, 8, " Rename Branch ", ratatui::style::Color::Cyan, lines);
+        self.draw_input_dialog(
+            f,
+            area,
+            8,
+            " Rename Branch ",
+            ratatui::style::Color::Cyan,
+            lines,
+        );
     }
 
-    fn draw_ref_diff_popup(&self, f: &mut Frame, area: Rect, title: &str, content: &str, scroll: &u16) {
-        let popup_w = (area.width * 4 / 5).max(40);
-        let popup_h = (area.height * 4 / 5).max(10);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
-        let inner = Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(3),
-        };
+    fn draw_ref_diff_popup(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        title: &str,
+        content: &str,
+        scroll: &u16,
+    ) {
+        let popup_area = centered_popup_area(area, 4, 5, 40, 4, 5, 10);
+        render_popup_background(f, popup_area);
+        let inner = popup_inner_area(popup_area);
 
         // Color diff lines
         let lines: Vec<Line> = content
@@ -2104,37 +2535,20 @@ impl App {
 
         let title_str = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", title);
         let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title_str.as_str())
-                    .border_style(Style::default().fg(ratatui::style::Color::Yellow)),
-            )
+            .style(popup_style())
+            .block(popup_block(
+                title_str.as_str(),
+                Style::default().fg(ratatui::style::Color::Yellow),
+            ))
             .scroll(((*scroll), 0));
 
         f.render_widget(paragraph, inner);
     }
 
     fn draw_gitignore_popup(&self, f: &mut Frame, area: Rect, content: &str, scroll: &u16) {
-        let popup_w = (area.width * 4 / 5).max(40);
-        let popup_h = (area.height * 4 / 5).max(10);
-        let popup_x = (area.width.saturating_sub(popup_w)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_h)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        let clear = Block::default().style(
-            Style::default()
-                .bg(ratatui::style::Color::Black)
-                .fg(ratatui::style::Color::White),
-        );
-        f.render_widget(clear, popup_area);
-
-        let inner = Rect {
-            x: popup_area.x + 1,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(2),
-            height: popup_area.height.saturating_sub(3),
-        };
+        let popup_area = centered_popup_area(area, 4, 5, 40, 4, 5, 10);
+        render_popup_background(f, popup_area);
+        let inner = popup_inner_area(popup_area);
 
         let lines: Vec<Line> = content
             .lines()
@@ -2150,14 +2564,350 @@ impl App {
             .collect();
 
         let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" .gitignore (j/k:scroll G/g:jump PgUp/PgDn) ")
-                    .border_style(Style::default().fg(ratatui::style::Color::Green)),
-            )
+            .style(popup_style())
+            .block(popup_block(
+                " .gitignore (j/k:scroll G/g:jump PgUp/PgDn) ",
+                Style::default().fg(ratatui::style::Color::Green),
+            ))
             .scroll(((*scroll), 0));
 
         f.render_widget(paragraph, inner);
+    }
+}
+
+fn input_dialog_widget<'a>(
+    title: &'a str,
+    border_color: ratatui::style::Color,
+    lines: Vec<Line<'a>>,
+) -> Paragraph<'a> {
+    Paragraph::new(lines)
+        .style(popup_style())
+        .block(popup_block(title, Style::default().fg(border_color)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::CogitConfig, gitops::Repository};
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::fs;
+
+    fn setup_test_repo(dir_name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("cogit-test-app-popup-{}", dir_name));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let repo = Repository::open(&dir).unwrap();
+        repo.git_cmd(&["init", "-b", "main"]).unwrap();
+        repo.git_cmd(&["config", "user.name", "Test"]).unwrap();
+        repo.git_cmd(&["config", "user.email", "test@test.com"])
+            .unwrap();
+        fs::write(dir.join("file.txt"), "initial\n").unwrap();
+        repo.git_cmd(&["add", "."]).unwrap();
+        repo.git_cmd(&["commit", "-m", "initial"]).unwrap();
+        dir
+    }
+
+    #[test]
+    fn pane_and_view_roundtrip() {
+        for pane in PaneId::ALL {
+            assert_eq!(App::pane_for_view(&App::view_for_pane(pane)), pane);
+        }
+    }
+
+    #[test]
+    fn mode_label_formats_normal_edit_and_visual() {
+        assert_eq!(App::mode_label(&Mode::Normal), "NORMAL");
+        assert_eq!(App::mode_label(&Mode::Edit), "EDIT");
+        assert_eq!(App::mode_label(&Mode::Visual), "VISUAL");
+    }
+
+    #[test]
+    fn mode_shortcuts_follow_native_vim_style_bindings() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+
+        assert_eq!(
+            App::mode_shortcuts(&keymap).as_deref(),
+            Some("modes:Esc normal / i edit / v visual")
+        );
+    }
+
+    #[test]
+    fn status_bar_shortcuts_follow_global_keymap_overrides() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        keymap.override_binding(
+            KeyContext::Global,
+            "save_layout_local",
+            "Ctrl+s".to_string(),
+        );
+
+        assert_eq!(
+            App::status_bar_layout_shortcuts(&keymap).as_deref(),
+            Some("save:Ctrl+s local / Ctrl+g global / Ctrl+r reset")
+        );
+    }
+
+    #[test]
+    fn status_bar_shortcuts_keep_remaining_bindings_when_one_is_missing() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        keymap.remove_binding_for_test(KeyContext::Global, "save_layout_local");
+
+        assert_eq!(
+            App::status_bar_layout_shortcuts(&keymap).as_deref(),
+            Some("save:Ctrl+g global / Ctrl+r reset")
+        );
+    }
+
+    #[test]
+    fn pane_jump_keys_follow_global_keymap_overrides() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+        keymap.override_binding(KeyContext::Global, "view_files", "F".to_string());
+        keymap.override_binding(KeyContext::Global, "view_branches", "9".to_string());
+        keymap.override_binding(KeyContext::Global, "view_rebase", "B".to_string());
+
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Files).as_deref(),
+            Some("F")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Branches).as_deref(),
+            Some("9")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Rebase).as_deref(),
+            Some("B")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Remote).as_deref(),
+            Some("R")
+        );
+    }
+
+    #[test]
+    fn every_tiled_pane_has_a_jump_key() {
+        let keymap = KeymapManager::new(&CogitConfig::default());
+
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Files).as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Branches).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Log).as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Console).as_deref(),
+            Some("3")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Stash).as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Rebase).as_deref(),
+            Some("5")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Remote).as_deref(),
+            Some("R")
+        );
+        assert_eq!(
+            App::pane_jump_key(&keymap, PaneId::Shelve).as_deref(),
+            Some("W")
+        );
+    }
+
+    #[test]
+    fn input_dialog_clears_background_before_rendering() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(
+                    Style::default()
+                        .bg(ratatui::style::Color::Red)
+                        .fg(ratatui::style::Color::White),
+                );
+                f.render_widget(background, area);
+
+                let popup_area = Rect::new(20, 10, 40, 8);
+                super::popup::render_popup_background(f, popup_area);
+                let paragraph = input_dialog_widget(
+                    " Commit ",
+                    ratatui::style::Color::Green,
+                    vec![Line::from("commit")],
+                );
+                f.render_widget(paragraph, popup_area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(30, 12)].bg, ratatui::style::Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, ratatui::style::Color::Red);
+    }
+
+    #[test]
+    fn diff_popup_clears_background_before_rendering() {
+        let repo_dir = setup_test_repo("diff");
+        let app = App::new(&repo_dir).unwrap();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(
+                    Style::default()
+                        .bg(ratatui::style::Color::Red)
+                        .fg(ratatui::style::Color::White),
+                );
+                f.render_widget(background, area);
+                app.draw_diff_popup(f, area, "file.txt", "@@\n+added line", 0);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(40, 12)].bg, ratatui::style::Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, ratatui::style::Color::Red);
+    }
+
+    #[test]
+    fn gitignore_popup_clears_background_before_rendering() {
+        let repo_dir = setup_test_repo("gitignore");
+        let app = App::new(&repo_dir).unwrap();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let background = Block::default().style(
+                    Style::default()
+                        .bg(ratatui::style::Color::Red)
+                        .fg(ratatui::style::Color::White),
+                );
+                f.render_widget(background, area);
+                app.draw_gitignore_popup(f, area, "# comment\ntarget/", &0);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(40, 12)].bg, ratatui::style::Color::Black);
+        assert_eq!(buffer[(2, 2)].bg, ratatui::style::Color::Red);
+    }
+
+    #[test]
+    fn status_bar_renders_mode_label_and_native_mode_shortcuts() {
+        let repo_dir = setup_test_repo("status-mode-hints");
+        let app = App::new(&repo_dir).unwrap();
+        let backend = TestBackend::new(120, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 120, 1);
+                app.draw_status_bar(f, area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let rendered = (0..120)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("mode:NORMAL"));
+        assert!(rendered.contains("modes:Esc normal / i edit / v visual"));
+    }
+
+    #[test]
+    fn footer_renders_current_mode_label() {
+        let repo_dir = setup_test_repo("footer-mode-hint");
+        let app = App::new(&repo_dir).unwrap();
+        let backend = TestBackend::new(120, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 120, 1);
+                app.draw_footer(f, area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let rendered = (0..120)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("[mode:NORMAL]"));
+    }
+
+    #[test]
+    fn normal_mode_ignores_resize_shortcuts() {
+        let repo_dir = setup_test_repo("normal-mode-resize");
+        let mut app = App::new(&repo_dir).unwrap();
+        let before = app.layout.columns;
+
+        app.handle_event(KeyEvent::new(
+            KeyCode::Right,
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.layout.columns, before);
+    }
+
+    #[test]
+    fn edit_mode_allows_resize_shortcuts() {
+        let repo_dir = setup_test_repo("edit-mode-resize");
+        let mut app = App::new(&repo_dir).unwrap();
+        let before = app.layout.columns;
+        app.dispatch(Action::EnterEditMode);
+
+        app.handle_event(KeyEvent::new(
+            KeyCode::Right,
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+
+        assert_eq!(app.mode, Mode::Edit);
+        assert_ne!(app.layout.columns, before);
+    }
+
+    #[test]
+    fn visual_mode_can_hide_active_pane() {
+        let repo_dir = setup_test_repo("visual-mode-hide");
+        let mut app = App::new(&repo_dir).unwrap();
+        app.dispatch(Action::EnterVisualMode);
+
+        app.handle_event(KeyEvent::new(
+            KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+
+        assert_eq!(app.mode, Mode::Visual);
+        assert!(app.layout.is_hidden(PaneId::Files));
+        assert_eq!(app.layout.active_pane(), PaneId::Branches);
+        assert_eq!(app.view, View::Branches);
+    }
+
+    #[test]
+    fn escape_leaves_visual_mode_without_leaving_current_view() {
+        let repo_dir = setup_test_repo("visual-mode-escape");
+        let mut app = App::new(&repo_dir).unwrap();
+        app.dispatch(Action::ShowConsolePanel);
+        app.dispatch(Action::EnterVisualMode);
+
+        app.handle_event(KeyEvent::new(
+            KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.view, View::Console);
+        assert_eq!(app.layout.active_pane(), PaneId::Console);
     }
 }

@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::Repository;
@@ -30,8 +30,8 @@ pub struct RemotePanel {
 }
 
 enum AddRemoteStep {
-    Name,   // Waiting for remote name
-    Url,    // Waiting for remote URL
+    Name, // Waiting for remote name
+    Url,  // Waiting for remote URL
 }
 
 impl RemotePanel {
@@ -77,7 +77,7 @@ impl Panel for RemotePanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
@@ -85,9 +85,12 @@ impl Panel for RemotePanel {
         };
 
         let title = if self.input_mode {
-            format!(" Remotes [{}: {}] ", self.input_prompt, self.input_buffer)
+            format_panel_title(
+                &format!("Remotes [{}: {}]", self.input_prompt, self.input_buffer),
+                shortcut,
+            )
         } else {
-            " Remotes ".to_string()
+            format_panel_title(self.title(), shortcut)
         };
 
         let items: Vec<ListItem> = self

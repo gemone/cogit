@@ -1,14 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
-    Frame,
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title, format_section_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::{Repository, shelve::ShelveEntry, stash::StashEntry};
@@ -73,7 +73,7 @@ impl Panel for StashPanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
@@ -112,7 +112,7 @@ impl Panel for StashPanel {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Stash/Shelve ")
+                    .title(format_panel_title(self.title(), shortcut))
                     .border_style(border_style),
             )
             .select(if self.tab == StashTab::Stash { 0 } else { 1 });
@@ -222,7 +222,7 @@ impl StashPanel {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Stash Entries ")
+                .title(format_section_title("Stash Entries"))
                 .border_style(border_style),
         )
         .highlight_style(self.styles.highlight);
@@ -263,7 +263,7 @@ impl StashPanel {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Shelve Entries ")
+                .title(format_section_title("Shelve Entries"))
                 .border_style(border_style),
         )
         .highlight_style(self.styles.highlight);
@@ -278,7 +278,11 @@ impl StashPanel {
         }
 
         match key.code {
-            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('d')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 let len = self.stash_entries.len();
                 if len > 0 {
                     let i = self.stash_state.selected().unwrap_or(0);
@@ -286,7 +290,11 @@ impl StashPanel {
                 }
                 None
             }
-            KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 let i = self.stash_state.selected().unwrap_or(0);
                 self.stash_state.select(Some(i.saturating_sub(10)));
                 None
@@ -306,7 +314,11 @@ impl StashPanel {
         }
 
         match key.code {
-            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('d')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 let len = self.shelve_entries.len();
                 if len > 0 {
                     let i = self.shelve_state.selected().unwrap_or(0);
@@ -314,17 +326,26 @@ impl StashPanel {
                 }
                 None
             }
-            KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 let i = self.shelve_state.selected().unwrap_or(0);
                 self.shelve_state.select(Some(i.saturating_sub(10)));
                 None
             }
             KeyCode::Enter => self.selected_shelve_name().and_then(|name| {
-                self.shelve_entries.iter().find(|e| e.name == name).map(|e| Action::ShelveApply(e.index, false))
+                self.shelve_entries
+                    .iter()
+                    .find(|e| e.name == name)
+                    .map(|e| Action::ShelveApply(e.index, false))
             }),
             KeyCode::Char('d') => {
                 let i = self.shelve_state.selected().unwrap_or(0);
-                self.shelve_entries.get(i).map(|e| Action::ShelveDrop(e.index))
+                self.shelve_entries
+                    .get(i)
+                    .map(|e| Action::ShelveDrop(e.index))
             }
             _ => None,
         }

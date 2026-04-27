@@ -1,14 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
-    Frame,
 };
 use std::any::Any;
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::gitops::types::{RebaseAction, RebaseTodo};
 
@@ -95,9 +95,15 @@ impl RebasePanel {
 }
 
 impl Panel for RebasePanel {
-    fn focus(&mut self) { self.focused = true; }
-    fn blur(&mut self) { self.focused = false; }
-    fn title(&self) -> &str { "Rebase" }
+    fn focus(&mut self) {
+        self.focused = true;
+    }
+    fn blur(&mut self) {
+        self.focused = false;
+    }
+    fn title(&self) -> &str {
+        "Rebase"
+    }
 
     fn refresh(&mut self) {}
 
@@ -147,7 +153,7 @@ impl Panel for RebasePanel {
         }
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let items: Vec<ListItem> = self
             .todos
             .iter()
@@ -176,12 +182,16 @@ impl Panel for RebasePanel {
             .collect();
 
         let title = if self.onto.is_empty() {
-            " Rebase ".to_string()
+            format_panel_title(self.title(), shortcut)
         } else {
-            format!(" Rebase onto {} ", self.onto)
+            format_panel_title(&format!("Rebase onto {}", self.onto), shortcut)
         };
 
-        let border_color = if self.focused { Color::Cyan } else { Color::DarkGray };
+        let border_color = if self.focused {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        };
 
         let list = List::new(items)
             .block(
@@ -199,6 +209,10 @@ impl Panel for RebasePanel {
         f.render_stateful_widget(list, area, &mut self.state);
     }
 
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }

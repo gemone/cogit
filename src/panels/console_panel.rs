@@ -1,16 +1,16 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
-    Frame,
 };
 use std::any::Any;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use super::{Action, Panel};
+use super::{Action, Panel, format_panel_title};
 use crate::app::navigation::handle_list_navigation;
 use crate::app::styles::Styles;
 use crate::gitops::types::OperationEntry;
@@ -107,7 +107,8 @@ impl ConsolePanel {
         if self.entries.len() > MAX_ENTRIES {
             self.entries.remove(0);
         }
-        self.state.select(Some(self.entries.len().saturating_sub(1)));
+        self.state
+            .select(Some(self.entries.len().saturating_sub(1)));
     }
 }
 
@@ -120,14 +121,14 @@ impl Panel for ConsolePanel {
         self.focused = false;
     }
 
-    fn render(&mut self, f: &mut Frame, area: Rect) {
+    fn render(&mut self, f: &mut Frame, area: Rect, shortcut: Option<&str>) {
         let border_style = if self.focused {
             self.styles.border_active
         } else {
             self.styles.border_inactive
         };
 
-        let title = format!(" Console [{}] ", self.entries.len());
+        let title = format_panel_title(&format!("Console [{}]", self.entries.len()), shortcut);
 
         let items: Vec<ListItem> = self
             .entries
@@ -156,7 +157,11 @@ impl Panel for ConsolePanel {
                         self.styles.text_primary,
                     ),
                     Span::styled(
-                        if e.is_ok() { "✓".to_string() } else { "✗ ".to_string() },
+                        if e.is_ok() {
+                            "✓".to_string()
+                        } else {
+                            "✗ ".to_string()
+                        },
                         result_style,
                     ),
                 ]);

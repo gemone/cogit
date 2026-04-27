@@ -21,11 +21,12 @@ pub enum KeyContext {
 }
 
 impl KeyContext {
-    const ALL: [KeyContext; 8] = [
+    const ALL: [KeyContext; 9] = [
         KeyContext::Global,
         KeyContext::Main,
         KeyContext::Branches,
         KeyContext::Log,
+        KeyContext::Rebase,
         KeyContext::Stash,
         KeyContext::Remote,
         KeyContext::Shelve,
@@ -158,17 +159,50 @@ impl KeymapManager {
 
     pub fn bindings_for(&self, context: KeyContext) -> Vec<KeyBindingHint> {
         let state = self.state.read().expect("keymap lock poisoned");
-        state.cache.get(&context)
-            .map(|ctx| ctx.specs.iter()
-                .map(|spec| KeyBindingHint { key: spec.key.clone(), description: spec.description })
-                .collect())
+        state
+            .cache
+            .get(&context)
+            .map(|ctx| {
+                ctx.specs
+                    .iter()
+                    .map(|spec| KeyBindingHint {
+                        key: spec.key.clone(),
+                        description: spec.description,
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
+    }
+
+    pub fn binding_key(&self, context: KeyContext, action_id: &str) -> Option<String> {
+        let state = self.state.read().expect("keymap lock poisoned");
+        state
+            .cache
+            .get(&context)
+            .and_then(|ctx| ctx.specs.iter().find(|spec| spec.id == action_id))
+            .map(|spec| spec.key.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_binding_for_test(&self, context: KeyContext, action_id: &str) {
+        let mut state = self.state.write().expect("keymap lock poisoned");
+        if let Some(ctx) = state.cache.get_mut(&context) {
+            if let Some(index) = ctx.specs.iter().position(|spec| spec.id == action_id) {
+                let spec = ctx.specs.remove(index);
+                ctx.lookup.remove(&spec.key);
+            }
+        }
     }
 
     pub fn override_binding(&self, context: KeyContext, action_id: &str, key: String) {
         let mut state = self.state.write().expect("keymap lock poisoned");
         if let Some(k) = context.override_key() {
-            state.overrides.views.entry(k.to_string()).or_default().insert(action_id.to_string(), key);
+            state
+                .overrides
+                .views
+                .entry(k.to_string())
+                .or_default()
+                .insert(action_id.to_string(), key);
         } else {
             state.overrides.global.insert(action_id.to_string(), key);
         }
@@ -176,7 +210,11 @@ impl KeymapManager {
     }
 }
 
-fn build_bindings(preset: KeymapPreset, context: KeyContext, overrides: &KeymapOverrides) -> Vec<BindingSpec> {
+fn build_bindings(
+    preset: KeymapPreset,
+    context: KeyContext,
+    overrides: &KeymapOverrides,
+) -> Vec<BindingSpec> {
     let mut defaults = match preset {
         KeymapPreset::Vim => vim_bindings(context),
         KeymapPreset::Helix => helix_bindings(context),
@@ -201,42 +239,233 @@ fn build_bindings(preset: KeymapPreset, context: KeyContext, overrides: &KeymapO
 fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
     match context {
         KeyContext::Global => vec![
-            binding("open_command", ":", "Open command palette", Some(Action::OpenCommandPalette)),
+            binding(
+                "open_command",
+                ":",
+                "Open command palette",
+                Some(Action::OpenCommandPalette),
+            ),
+            binding(
+                "mode_normal",
+                "Esc",
+                "Switch to normal mode",
+                Some(Action::EnterNormalMode),
+            ),
+            binding(
+                "mode_edit",
+                "i",
+                "Switch to edit mode",
+                Some(Action::EnterEditMode),
+            ),
+            binding(
+                "mode_visual",
+                "v",
+                "Switch to visual mode",
+                Some(Action::EnterVisualMode),
+            ),
+            binding(
+                "hide_active_pane",
+                "x",
+                "Hide active pane",
+                Some(Action::HideActivePane),
+            ),
+            binding(
+                "show_all_panes",
+                "X",
+                "Show all panes",
+                Some(Action::ShowAllPanes),
+            ),
             binding("help", "?", "Show which-key/help", Some(Action::Help)),
             binding("quit", "q", "Quit", Some(Action::Quit)),
-            binding("view_branches", "1", "Open branches panel", Some(Action::ShowBranchPanel)),
-            binding("view_log", "2", "Open log panel", Some(Action::ShowLogPanel)),
-            binding("view_console", "3", "Open console panel", Some(Action::ShowConsolePanel)),
-            binding("view_stash", "4", "Open stash/shelve panel", Some(Action::ShowStashPanel)),
-            binding("view_remote", "R", "Open remotes panel", Some(Action::ShowRemotePanel)),
-            binding("view_shelve", "W", "Open shelves panel", Some(Action::ShowShelvePanel)),
+            binding(
+                "next_view",
+                "Tab",
+                "Focus next pane",
+                Some(Action::NextView),
+            ),
+            binding(
+                "prev_view",
+                "Shift+Tab",
+                "Focus previous pane",
+                Some(Action::PrevView),
+            ),
+            binding(
+                "grow_width",
+                "Ctrl+Right",
+                "Grow active pane width",
+                Some(Action::GrowPaneWidth),
+            ),
+            binding(
+                "shrink_width",
+                "Ctrl+Left",
+                "Shrink active pane width",
+                Some(Action::ShrinkPaneWidth),
+            ),
+            binding(
+                "grow_height",
+                "Ctrl+Down",
+                "Grow active pane height",
+                Some(Action::GrowPaneHeight),
+            ),
+            binding(
+                "shrink_height",
+                "Ctrl+Up",
+                "Shrink active pane height",
+                Some(Action::ShrinkPaneHeight),
+            ),
+            binding(
+                "reset_layout",
+                "Ctrl+r",
+                "Reset tiled layout",
+                Some(Action::ResetLayout),
+            ),
+            binding(
+                "save_layout_local",
+                "Alt+s",
+                "Save layout to .git/config",
+                Some(Action::SaveLayoutLocal),
+            ),
+            binding(
+                "save_layout_global",
+                "Ctrl+g",
+                "Save layout as global default",
+                Some(Action::SaveLayoutGlobal),
+            ),
+            binding(
+                "view_files",
+                "0",
+                "Focus files pane",
+                Some(Action::ShowFilesPanel),
+            ),
+            binding(
+                "view_branches",
+                "1",
+                "Focus branches pane",
+                Some(Action::ShowBranchPanel),
+            ),
+            binding(
+                "view_log",
+                "2",
+                "Focus log pane",
+                Some(Action::ShowLogPanel),
+            ),
+            binding(
+                "view_console",
+                "3",
+                "Focus console pane",
+                Some(Action::ShowConsolePanel),
+            ),
+            binding(
+                "view_stash",
+                "4",
+                "Focus stash/shelve pane",
+                Some(Action::ShowStashPanel),
+            ),
+            binding(
+                "view_rebase",
+                "5",
+                "Focus rebase pane",
+                Some(Action::ShowRebasePanel),
+            ),
+            binding(
+                "view_remote",
+                "R",
+                "Focus remotes pane",
+                Some(Action::ShowRemotePanel),
+            ),
+            binding(
+                "view_shelve",
+                "W",
+                "Focus shelves pane",
+                Some(Action::ShowShelvePanel),
+            ),
             binding("undo", "Ctrl+z", "Undo last operation", Some(Action::Undo)),
         ],
         KeyContext::Main => vec![
             binding("stage", "s", "Stage selected file", Some(Action::Stage)),
             binding("stage_all", "S", "Stage all files", Some(Action::StageAll)),
-            binding("unstage", "u", "Unstage selected file", Some(Action::Unstage)),
-            binding("unstage_all", "U", "Unstage all files", Some(Action::UnstageAll)),
-            binding("toggle_stage", "Space", "Toggle stage/unstage", Some(Action::ToggleStage)),
-            binding("discard", "d", "Discard selected file", Some(Action::Discard)),
-            binding("commit", "c", "Open commit dialog", Some(Action::CommitDialog)),
+            binding(
+                "unstage",
+                "u",
+                "Unstage selected file",
+                Some(Action::Unstage),
+            ),
+            binding(
+                "unstage_all",
+                "U",
+                "Unstage all files",
+                Some(Action::UnstageAll),
+            ),
+            binding(
+                "toggle_stage",
+                "Space",
+                "Toggle stage/unstage",
+                Some(Action::ToggleStage),
+            ),
+            binding(
+                "discard",
+                "d",
+                "Discard selected file",
+                Some(Action::Discard),
+            ),
+            binding(
+                "commit",
+                "c",
+                "Open commit dialog",
+                Some(Action::CommitDialog),
+            ),
             binding("open_diff", "Enter", "Open diff popup", None),
-            binding("reset_dialog", "Ctrl+u", "Open reset dialog", Some(Action::ResetDialog("mixed".to_string()))),
+            binding(
+                "reset_dialog",
+                "Ctrl+u",
+                "Open reset dialog",
+                Some(Action::ResetDialog("mixed".to_string())),
+            ),
         ],
         KeyContext::Branches => vec![
             binding("checkout", "Enter", "Checkout selected branch", None),
-            binding("create_branch", "n", "Create branch", Some(Action::CreateBranchDialog)),
+            binding(
+                "create_branch",
+                "n",
+                "Create branch",
+                Some(Action::CreateBranchDialog),
+            ),
             binding("rename_branch", "R", "Rename branch", None),
             binding("delete_branch", "d", "Delete branch", None),
             binding("fetch", "f", "Fetch all remotes", Some(Action::FetchAll)),
-            binding("push", "p", "Push current branch", Some(Action::PushCurrent)),
-            binding("pull", "P", "Pull current branch", Some(Action::PullCurrent)),
+            binding(
+                "push",
+                "p",
+                "Push current branch",
+                Some(Action::PushCurrent),
+            ),
+            binding(
+                "pull",
+                "P",
+                "Pull current branch",
+                Some(Action::PullCurrent),
+            ),
             binding("merge", "m", "Merge branch", None),
             binding("rebase", "r", "Rebase branch", None),
             binding("remote_checkout", "o", "Checkout remote branch", None),
-            binding("rebase_continue", "c", "Continue rebase", Some(Action::RebaseContinue)),
-            binding("rebase_abort", "a", "Abort rebase", Some(Action::RebaseAbort)),
-            binding("rebase_skip", "s", "Skip rebase step", Some(Action::RebaseSkip)),
+            binding(
+                "rebase_continue",
+                "c",
+                "Continue rebase",
+                Some(Action::RebaseContinue),
+            ),
+            binding(
+                "rebase_abort",
+                "a",
+                "Abort rebase",
+                Some(Action::RebaseAbort),
+            ),
+            binding(
+                "rebase_skip",
+                "s",
+                "Skip rebase step",
+                Some(Action::RebaseSkip),
+            ),
             binding("search", "/", "Search branches", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
@@ -250,7 +479,7 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
         KeyContext::Log => vec![
             binding("copy_hash", "y", "Copy commit hash", None),
             binding("cherry_pick", "c", "Cherry-pick commit", None),
-            binding("revert", "r", "Revert commit", None),  // hint-only; resolved in LogPanel
+            binding("revert", "r", "Revert commit", None), // hint-only; resolved in LogPanel
             binding("search", "/", "Search commits", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
@@ -281,7 +510,12 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
         ],
         KeyContext::Console => vec![
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
-            binding("back_alt", "Esc", "Back to main view", Some(Action::BackToMain)),
+            binding(
+                "back_alt",
+                "Esc",
+                "Back to main view",
+                Some(Action::BackToMain),
+            ),
             binding("jump_bottom", "G", "Jump to latest", None),
             binding("jump_top", "g", "Jump to oldest", None),
         ],
@@ -291,34 +525,198 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
 fn helix_bindings(context: KeyContext) -> Vec<BindingSpec> {
     match context {
         KeyContext::Global => vec![
-            binding("open_command", ":", "Open command palette", Some(Action::OpenCommandPalette)),
+            binding(
+                "open_command",
+                ":",
+                "Open command palette",
+                Some(Action::OpenCommandPalette),
+            ),
+            binding(
+                "mode_normal",
+                "Esc",
+                "Switch to normal mode",
+                Some(Action::EnterNormalMode),
+            ),
+            binding(
+                "mode_edit",
+                "i",
+                "Switch to edit mode",
+                Some(Action::EnterEditMode),
+            ),
+            binding(
+                "mode_visual",
+                "v",
+                "Switch to visual mode",
+                Some(Action::EnterVisualMode),
+            ),
+            binding(
+                "hide_active_pane",
+                "x",
+                "Hide active pane",
+                Some(Action::HideActivePane),
+            ),
+            binding(
+                "show_all_panes",
+                "X",
+                "Show all panes",
+                Some(Action::ShowAllPanes),
+            ),
             binding("help", "?", "Show which-key/help", Some(Action::Help)),
             binding("quit", "q", "Quit", Some(Action::Quit)),
-            binding("next_view", "Tab", "Next view", Some(Action::NextView)),
-            binding("prev_view", "Shift+Tab", "Previous view", Some(Action::PrevView)),
-            binding("view_branches", "1", "Open branches panel", Some(Action::ShowBranchPanel)),
-            binding("view_log", "2", "Open log panel", Some(Action::ShowLogPanel)),
-            binding("view_console", "3", "Open console panel", Some(Action::ShowConsolePanel)),
-            binding("view_stash", "4", "Open stash/shelve panel", Some(Action::ShowStashPanel)),
-            binding("view_remote", "R", "Open remotes panel", Some(Action::ShowRemotePanel)),
-            binding("view_shelve", "S", "Open shelves panel", Some(Action::ShowShelvePanel)),
+            binding(
+                "next_view",
+                "Tab",
+                "Focus next pane",
+                Some(Action::NextView),
+            ),
+            binding(
+                "prev_view",
+                "Shift+Tab",
+                "Focus previous pane",
+                Some(Action::PrevView),
+            ),
+            binding(
+                "grow_width",
+                "Ctrl+Right",
+                "Grow active pane width",
+                Some(Action::GrowPaneWidth),
+            ),
+            binding(
+                "shrink_width",
+                "Ctrl+Left",
+                "Shrink active pane width",
+                Some(Action::ShrinkPaneWidth),
+            ),
+            binding(
+                "grow_height",
+                "Ctrl+Down",
+                "Grow active pane height",
+                Some(Action::GrowPaneHeight),
+            ),
+            binding(
+                "shrink_height",
+                "Ctrl+Up",
+                "Shrink active pane height",
+                Some(Action::ShrinkPaneHeight),
+            ),
+            binding(
+                "reset_layout",
+                "Ctrl+r",
+                "Reset tiled layout",
+                Some(Action::ResetLayout),
+            ),
+            binding(
+                "save_layout_local",
+                "Alt+s",
+                "Save layout to .git/config",
+                Some(Action::SaveLayoutLocal),
+            ),
+            binding(
+                "save_layout_global",
+                "Ctrl+g",
+                "Save layout as global default",
+                Some(Action::SaveLayoutGlobal),
+            ),
+            binding(
+                "view_files",
+                "0",
+                "Focus files pane",
+                Some(Action::ShowFilesPanel),
+            ),
+            binding(
+                "view_branches",
+                "1",
+                "Focus branches pane",
+                Some(Action::ShowBranchPanel),
+            ),
+            binding(
+                "view_log",
+                "2",
+                "Focus log pane",
+                Some(Action::ShowLogPanel),
+            ),
+            binding(
+                "view_console",
+                "3",
+                "Focus console pane",
+                Some(Action::ShowConsolePanel),
+            ),
+            binding(
+                "view_stash",
+                "4",
+                "Focus stash/shelve pane",
+                Some(Action::ShowStashPanel),
+            ),
+            binding(
+                "view_rebase",
+                "5",
+                "Focus rebase pane",
+                Some(Action::ShowRebasePanel),
+            ),
+            binding(
+                "view_remote",
+                "R",
+                "Focus remotes pane",
+                Some(Action::ShowRemotePanel),
+            ),
+            binding(
+                "view_shelve",
+                "S",
+                "Focus shelves pane",
+                Some(Action::ShowShelvePanel),
+            ),
         ],
         KeyContext::Main => vec![
             binding("stage", "s", "Stage selected file", Some(Action::Stage)),
             binding("stage_all", "A", "Stage all files", Some(Action::StageAll)),
-            binding("unstage", "u", "Unstage selected file", Some(Action::Unstage)),
-            binding("unstage_all", "V", "Unstage all files", Some(Action::UnstageAll)),
-            binding("discard", "d", "Discard selected file", Some(Action::Discard)),
-            binding("commit", "c", "Open commit dialog", Some(Action::CommitDialog)),
+            binding(
+                "unstage",
+                "u",
+                "Unstage selected file",
+                Some(Action::Unstage),
+            ),
+            binding(
+                "unstage_all",
+                "V",
+                "Unstage all files",
+                Some(Action::UnstageAll),
+            ),
+            binding(
+                "discard",
+                "d",
+                "Discard selected file",
+                Some(Action::Discard),
+            ),
+            binding(
+                "commit",
+                "c",
+                "Open commit dialog",
+                Some(Action::CommitDialog),
+            ),
             binding("open_diff", "Enter", "Open diff popup", None),
-            binding("reset_dialog", "Ctrl+u", "Open reset dialog", Some(Action::ResetDialog("mixed".to_string()))),
+            binding(
+                "reset_dialog",
+                "Ctrl+u",
+                "Open reset dialog",
+                Some(Action::ResetDialog("mixed".to_string())),
+            ),
         ],
         _ => vim_bindings(context),
     }
 }
 
-fn binding(id: &'static str, key: &str, description: &'static str, action: Option<Action>) -> BindingSpec {
-    BindingSpec { id, key: key.to_string(), description, action }
+fn binding(
+    id: &'static str,
+    key: &str,
+    description: &'static str,
+    action: Option<Action>,
+) -> BindingSpec {
+    BindingSpec {
+        id,
+        key: key.to_string(),
+        description,
+        action,
+    }
 }
 
 fn key_label(key: KeyEvent) -> String {
@@ -326,6 +724,9 @@ fn key_label(key: KeyEvent) -> String {
         KeyCode::Char(' ') => "Space".into(),
         KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
             format!("Ctrl+{}", c.to_ascii_lowercase())
+        }
+        KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) => {
+            format!("Alt+{}", c.to_ascii_lowercase())
         }
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Enter => "Enter".into(),
@@ -336,6 +737,10 @@ fn key_label(key: KeyEvent) -> String {
         KeyCode::Backspace => "Backspace".into(),
         KeyCode::PageUp => "PageUp".into(),
         KeyCode::PageDown => "PageDown".into(),
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => "Ctrl+Up".into(),
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => "Ctrl+Down".into(),
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => "Ctrl+Left".into(),
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => "Ctrl+Right".into(),
         KeyCode::Up => "Up".into(),
         KeyCode::Down => "Down".into(),
         KeyCode::Left => "Left".into(),
@@ -355,7 +760,11 @@ mod tests {
 
     fn helix_km() -> KeymapManager {
         KeymapManager::new(&CogitConfig {
-            keymap: crate::config::KeymapConfig { preset: KeymapPreset::Helix, overrides: KeymapOverrides::default() },
+            keymap: crate::config::KeymapConfig {
+                preset: KeymapPreset::Helix,
+                overrides: KeymapOverrides::default(),
+            },
+            ..CogitConfig::default()
         })
     }
 
@@ -365,29 +774,45 @@ mod tests {
 
     #[test]
     fn helix_global_colon_opens_command_palette() {
-        assert!(matches!(helix_km().resolve(KeyContext::Global, key(KeyCode::Char(':'))), Some(Action::OpenCommandPalette)));
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char(':'))),
+            Some(Action::OpenCommandPalette)
+        ));
     }
 
     #[test]
     fn vim_global_colon_opens_command_palette() {
-        assert!(matches!(vim_km().resolve(KeyContext::Global, key(KeyCode::Char(':'))), Some(Action::OpenCommandPalette)));
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char(':'))),
+            Some(Action::OpenCommandPalette)
+        ));
     }
 
     #[test]
     fn vim_main_space_toggles_stage() {
-        assert!(matches!(vim_km().resolve(KeyContext::Main, key(KeyCode::Char(' '))), Some(Action::ToggleStage)));
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Main, key(KeyCode::Char(' '))),
+            Some(Action::ToggleStage)
+        ));
     }
 
     #[test]
     fn hint_only_bindings_skipped() {
         // open_diff is hint-only (None) — Enter should not resolve
-        assert!(vim_km().resolve(KeyContext::Main, key(KeyCode::Enter)).is_none());
+        assert!(
+            vim_km()
+                .resolve(KeyContext::Main, key(KeyCode::Enter))
+                .is_none()
+        );
     }
 
     #[test]
     fn vim_global_w_opens_shelve() {
         assert!(matches!(
-            vim_km().resolve(KeyContext::Global, KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT)),
+            vim_km().resolve(
+                KeyContext::Global,
+                KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT)
+            ),
             Some(Action::ShowShelvePanel)
         ));
     }
@@ -399,7 +824,10 @@ mod tests {
             Some(Action::Stage)
         ));
         assert!(matches!(
-            vim_km().resolve(KeyContext::Main, KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT)),
+            vim_km().resolve(
+                KeyContext::Main,
+                KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT)
+            ),
             Some(Action::StageAll)
         ));
     }
@@ -411,7 +839,10 @@ mod tests {
             Some(Action::Unstage)
         ));
         assert!(matches!(
-            vim_km().resolve(KeyContext::Main, KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT)),
+            vim_km().resolve(
+                KeyContext::Main,
+                KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT)
+            ),
             Some(Action::UnstageAll)
         ));
     }
@@ -419,9 +850,29 @@ mod tests {
     #[test]
     fn set_preset_rebuilds_cache() {
         let km = vim_km();
-        assert!(km.resolve(KeyContext::Global, key(KeyCode::Tab)).is_none());
+        assert!(
+            km.resolve(
+                KeyContext::Main,
+                KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT),
+            )
+            .is_none()
+        );
         km.set_preset(KeymapPreset::Helix);
-        assert!(matches!(km.resolve(KeyContext::Global, key(KeyCode::Tab)), Some(Action::NextView)));
+        assert!(matches!(
+            km.resolve(
+                KeyContext::Main,
+                KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT),
+            ),
+            Some(Action::StageAll)
+        ));
+    }
+
+    #[test]
+    fn vim_global_0_opens_files_panel() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('0'))),
+            Some(Action::ShowFilesPanel)
+        ));
     }
 
     #[test]
@@ -433,10 +884,56 @@ mod tests {
     }
 
     #[test]
+    fn vim_global_5_opens_rebase_panel() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('5'))),
+            Some(Action::ShowRebasePanel)
+        ));
+    }
+
+    #[test]
+    fn vim_global_alt_s_saves_layout_locally() {
+        assert!(matches!(
+            vim_km().resolve(
+                KeyContext::Global,
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT)
+            ),
+            Some(Action::SaveLayoutLocal)
+        ));
+    }
+
+    #[test]
+    fn helix_global_alt_s_saves_layout_locally() {
+        assert!(matches!(
+            helix_km().resolve(
+                KeyContext::Global,
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT)
+            ),
+            Some(Action::SaveLayoutLocal)
+        ));
+    }
+
+    #[test]
+    fn helix_global_0_opens_files_panel() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('0'))),
+            Some(Action::ShowFilesPanel)
+        ));
+    }
+
+    #[test]
     fn helix_global_3_opens_console_panel() {
         assert!(matches!(
             helix_km().resolve(KeyContext::Global, key(KeyCode::Char('3'))),
             Some(Action::ShowConsolePanel)
+        ));
+    }
+
+    #[test]
+    fn helix_global_5_opens_rebase_panel() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('5'))),
+            Some(Action::ShowRebasePanel)
         ));
     }
 
@@ -454,5 +951,53 @@ mod tests {
             vim_km().resolve(KeyContext::Console, key(KeyCode::Esc)),
             Some(Action::BackToMain)
         ));
+    }
+
+    #[test]
+    fn vim_global_i_enters_edit_mode() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('i'))),
+            Some(Action::EnterEditMode)
+        ));
+    }
+
+    #[test]
+    fn vim_global_v_enters_visual_mode() {
+        assert!(matches!(
+            vim_km().resolve(KeyContext::Global, key(KeyCode::Char('v'))),
+            Some(Action::EnterVisualMode)
+        ));
+    }
+
+    #[test]
+    fn helix_global_i_enters_edit_mode() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('i'))),
+            Some(Action::EnterEditMode)
+        ));
+    }
+
+    #[test]
+    fn helix_global_v_enters_visual_mode() {
+        assert!(matches!(
+            helix_km().resolve(KeyContext::Global, key(KeyCode::Char('v'))),
+            Some(Action::EnterVisualMode)
+        ));
+    }
+
+    #[test]
+    fn mode_normal_binding_uses_esc_hint() {
+        assert_eq!(
+            vim_km()
+                .binding_key(KeyContext::Global, "mode_normal")
+                .as_deref(),
+            Some("Esc")
+        );
+        assert_eq!(
+            helix_km()
+                .binding_key(KeyContext::Global, "mode_normal")
+                .as_deref(),
+            Some("Esc")
+        );
     }
 }

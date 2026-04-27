@@ -137,7 +137,8 @@ mod tests {
         let repo = Repository::open(&dir).unwrap();
         repo.git_cmd(&["init"]).unwrap();
         repo.git_cmd(&["config", "user.name", "Test"]).unwrap();
-        repo.git_cmd(&["config", "user.email", "test@test.com"]).unwrap();
+        repo.git_cmd(&["config", "user.email", "test@test.com"])
+            .unwrap();
         fs::write(dir.join("file.txt"), "initial\n").unwrap();
         repo.git_cmd(&["add", "."]).unwrap();
         repo.git_cmd(&["commit", "-m", "initial"]).unwrap();
