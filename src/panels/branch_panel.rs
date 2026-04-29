@@ -122,9 +122,9 @@ impl Panel for BranchPanel {
 
         // Help text at bottom
         let help_text = if matches!(self.rebase_state, RebaseState::InProgress { .. }) {
-            "Enter:switch n:new d:delete f:fetch p:push P:pull m:merge r:rebase c:continue a:abort s:skip /:search q:back"
+            "Enter:switch n:new d:delete ?:help"
         } else {
-            "Enter:switch n:new d:delete f:fetch p:push P:pull m:merge r:rebase /:search q:back"
+            "Enter:switch n:new d:delete ?:help"
         };
         let help = Paragraph::new(help_text).style(self.styles.text_secondary);
         let help_area = Rect {

@@ -160,7 +160,7 @@ impl ConfirmationDialog {
 
     pub fn render(&self, f: &mut Frame, area: Rect) {
         let width = 60.min(area.width.saturating_sub(4)).max(40).min(area.width);
-        let height = 10.min(area.height);
+        let height = 9.min(area.height);
         let x = area.width.saturating_sub(width) / 2;
         let y = area.height.saturating_sub(height) / 2;
 
@@ -205,7 +205,7 @@ impl ConfirmationDialog {
         );
 
         // Confirm option
-        let confirm_area = Rect::new(x + 2, y + 6, width - 4, 1);
+        let confirm_area = Rect::new(x + 2, y + 5, width - 4, 1);
         let confirm_is_selected = self.selected == 0;
         let confirm_prefix = if confirm_is_selected { "> " } else { "  " };
         let confirm_key_style = if confirm_is_selected {
@@ -232,7 +232,7 @@ impl ConfirmationDialog {
         );
 
         // Cancel option
-        let cancel_area = Rect::new(x + 2, y + 7, width - 4, 1);
+        let cancel_area = Rect::new(x + 2, y + 6, width - 4, 1);
         let cancel_is_selected = self.selected == 1;
         let cancel_prefix = if cancel_is_selected { "> " } else { "  " };
         let cancel_key_style = if cancel_is_selected {
@@ -256,16 +256,6 @@ impl ConfirmationDialog {
                 Span::styled("Cancel", cancel_label_style),
             ])),
             cancel_area,
-        );
-
-        // Footer hint
-        let footer_area = Rect::new(x + 1, y + height - 1, width - 2, 1);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " y/n: confirm/cancel  j/k: select  Enter: confirm  Esc: cancel ",
-                Style::default().fg(Color::DarkGray),
-            ))),
-            footer_area,
         );
     }
 }

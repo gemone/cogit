@@ -1988,18 +1988,6 @@ impl App {
                 self.styles.highlight.add_modifier(Modifier::BOLD),
             ));
         }
-        if let Some(shortcuts) = Self::mode_shortcuts(&self.keymap) {
-            spans.push(Span::styled(
-                format!(" {} ", shortcuts),
-                self.styles.text_secondary,
-            ));
-        }
-        if let Some(shortcuts) = Self::status_bar_layout_shortcuts(&self.keymap) {
-            spans.push(Span::styled(
-                format!(" {} ", shortcuts),
-                self.styles.text_secondary,
-            ));
-        }
         let status_bar = Paragraph::new(Line::from(spans))
             .style(Style::default().bg(ratatui::style::Color::DarkGray));
         f.render_widget(status_bar, area);
@@ -2152,7 +2140,7 @@ impl App {
             })
             .collect();
 
-        let title = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", path);
+        let title = format!(" Diff: {} ", path);
         let paragraph = Paragraph::new(lines)
             .style(popup_style())
             .block(popup_block(
@@ -2596,7 +2584,7 @@ impl App {
             })
             .collect();
 
-        let title_str = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", title);
+        let title_str = format!(" Diff: {} ", title);
         let paragraph = Paragraph::new(lines)
             .style(popup_style())
             .block(popup_block(
@@ -2629,7 +2617,7 @@ impl App {
         let paragraph = Paragraph::new(lines)
             .style(popup_style())
             .block(popup_block(
-                " .gitignore (j/k:scroll G/g:jump PgUp/PgDn) ",
+                " .gitignore ",
                 Style::default().fg(ratatui::style::Color::Green),
             ))
             .scroll(((*scroll), 0));
@@ -2865,7 +2853,7 @@ mod tests {
     }
 
     #[test]
-    fn status_bar_renders_mode_label_and_native_mode_shortcuts() {
+    fn status_bar_renders_mode_label() {
         let repo_dir = setup_test_repo("status-mode-hints");
         let app = App::new(&repo_dir).unwrap();
         let backend = TestBackend::new(120, 8);
@@ -2884,7 +2872,6 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("mode:NORMAL"));
-        assert!(rendered.contains("modes:Esc normal / i edit / v visual"));
     }
 
     #[test]

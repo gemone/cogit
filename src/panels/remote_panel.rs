@@ -136,7 +136,7 @@ impl Panel for RemotePanel {
         let help_text = if self.input_mode {
             "Enter:confirm Esc:cancel"
         } else {
-            "a:add d:delete r:rename u:fetch Enter:branches q:back"
+            "a:add d:delete ?:help"
         };
         let help = Paragraph::new(help_text).style(self.styles.text_secondary);
         let help_area = Rect {

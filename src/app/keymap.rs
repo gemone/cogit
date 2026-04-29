@@ -502,10 +502,10 @@ fn vim_bindings(context: KeyContext) -> Vec<BindingSpec> {
         KeyContext::Shelve => vec![
             binding("new", "n", "Create shelve", None),
             binding("toggle_staged", "s", "Toggle include staged", None),
-            binding("pop", "p", "Pop selected shelve", None),
+            binding("pop", "Enter", "Pop selected shelve", None),
             binding("apply", "a", "Apply selected shelve", None),
             binding("drop", "d", "Drop selected shelve", None),
-            binding("diff", "Enter", "View shelve diff", None),
+            binding("diff", "Space", "View shelve diff", None),
             binding("back", "q", "Back to main view", Some(Action::BackToMain)),
         ],
         KeyContext::Console => vec![
