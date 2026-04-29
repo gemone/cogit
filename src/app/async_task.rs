@@ -3,7 +3,7 @@
 
 use std::{
     collections::VecDeque,
-    sync::mpsc::{channel, Receiver},
+    sync::mpsc::{channel, Receiver, TryRecvError},
     thread,
 };
 
@@ -38,7 +38,17 @@ impl TaskHandle {
                     *self = TaskHandle::Done(result.clone());
                     Some(result)
                 }
-                Err(_) => None,
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    // Thread panicked or sender dropped without sending a result
+                    let result = TaskResult {
+                        label: "Task".to_string(),
+                        message: "Background task failed unexpectedly".to_string(),
+                        ok: false,
+                    };
+                    *self = TaskHandle::Done(result.clone());
+                    Some(result)
+                }
             },
             TaskHandle::Done(result) => {
                 let r = result.clone();
@@ -220,5 +230,110 @@ impl TaskManager {
 impl Default for TaskManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawn_and_drain_single_task() {
+        let mut mgr = TaskManager::new();
+        assert!(!mgr.has_running());
+
+        mgr.spawn("Test".to_string(), || TaskResult {
+            label: "Test".to_string(),
+            message: "done".to_string(),
+            ok: true,
+        });
+        assert!(mgr.has_running());
+        assert!(mgr.running_label.is_some());
+
+        // Give thread time to complete
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let results = mgr.drain_completed();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ok);
+        assert_eq!(results[0].message, "done");
+        assert!(!mgr.has_running());
+        assert!(mgr.running_label.is_none());
+    }
+
+    #[test]
+    fn drain_multiple_tasks() {
+        let mut mgr = TaskManager::new();
+
+        for i in 0..3 {
+            mgr.spawn(format!("Task{}", i), move || TaskResult {
+                label: format!("Task{}", i),
+                message: format!("result{}", i),
+                ok: true,
+            });
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let results = mgr.drain_completed();
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.ok));
+    }
+
+    #[test]
+    fn drain_with_failure() {
+        let mut mgr = TaskManager::new();
+        mgr.spawn("Fail".to_string(), || TaskResult {
+            label: "Fail".to_string(),
+            message: "something broke".to_string(),
+            ok: false,
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let results = mgr.drain_completed();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].ok);
+        assert_eq!(results[0].message, "something broke");
+    }
+
+    #[test]
+    fn drain_empty_returns_empty() {
+        let mut mgr = TaskManager::new();
+        let results = mgr.drain_completed();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn drain_pending_task_returns_empty() {
+        let mut mgr = TaskManager::new();
+        // Spawn a task that takes a while
+        mgr.spawn("Slow".to_string(), || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            TaskResult {
+                label: "Slow".to_string(),
+                message: "done".to_string(),
+                ok: true,
+            }
+        });
+
+        // Drain immediately — task still running
+        let results = mgr.drain_completed();
+        assert!(results.is_empty());
+        assert!(mgr.has_running());
+    }
+
+    #[test]
+    fn disconnected_channel_produces_failure() {
+        let mut handle = TaskHandle::Running({
+            let (tx, rx) = std::sync::mpsc::channel::<TaskResult>();
+            drop(tx); // sender dropped without sending
+            rx
+        });
+
+        let result = handle.try_take().unwrap();
+        assert!(!result.ok);
+        assert!(result.message.contains("unexpectedly"));
+        assert!(handle.is_done());
     }
 }

@@ -6,8 +6,6 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::styles::Styles;
-
 /// Represents a pending dangerous action awaiting user confirmation.
 /// Each variant holds the data needed to construct and dispatch the real Action.
 #[derive(Debug, Clone)]
@@ -17,7 +15,6 @@ pub enum Confirmation {
     ClearStash,
     ApplyStash(usize),
     PopStash(usize),
-    ForcePush,
     RemoveWorktree(String),
     DeleteTag(String),
     RemoveRemote(String),
@@ -31,7 +28,6 @@ impl Confirmation {
             Confirmation::ClearStash => "Clear Stash",
             Confirmation::ApplyStash(_) => "Apply Stash",
             Confirmation::PopStash(_) => "Pop Stash",
-            Confirmation::ForcePush => "Force Push",
             Confirmation::RemoveWorktree(_) => "Remove Worktree",
             Confirmation::DeleteTag(_) => "Delete Tag",
             Confirmation::RemoveRemote(_) => "Remove Remote",
@@ -49,9 +45,6 @@ impl Confirmation {
             }
             Confirmation::ApplyStash(idx) => format!("Apply stash #{}?", idx),
             Confirmation::PopStash(idx) => format!("Pop stash #{}?", idx),
-            Confirmation::ForcePush => {
-                "Force push to remote? This may overwrite remote history.".to_string()
-            }
             Confirmation::RemoveWorktree(path) => {
                 format!("Remove worktree at '{}'? Files will be kept on disk.", path)
             }
@@ -65,10 +58,7 @@ impl Confirmation {
     }
 
     pub fn confirm_label(&self) -> &'static str {
-        match self {
-            Confirmation::ForcePush => "Force Push",
-            _ => "Confirm",
-        }
+        "Confirm"
     }
 
     /// Returns the action to dispatch on confirmation (index 0 = confirm)
@@ -79,14 +69,14 @@ impl Confirmation {
             Confirmation::ClearStash => crate::panels::Action::StashDrop(usize::MAX), // special
             Confirmation::ApplyStash(idx) => crate::panels::Action::StashApply(*idx),
             Confirmation::PopStash(idx) => crate::panels::Action::StashPop(*idx),
-            Confirmation::ForcePush => crate::panels::Action::PushCurrent,
             Confirmation::RemoveWorktree(path) => crate::panels::Action::RemoveWorktree(path.clone()),
             Confirmation::DeleteTag(name) => crate::panels::Action::DeleteTag(name.clone()),
             Confirmation::RemoveRemote(name) => crate::panels::Action::RemoveRemote(name.clone()),
         }
     }
 
-    /// Build a Confirmation from an Action (for dangerous actions intercepted at dispatch)
+    /// Build a Confirmation from an Action (for dangerous actions intercepted at dispatch).
+    /// Only called for actions that are in the dispatch interception list.
     pub fn from_action(action: &crate::panels::Action) -> Self {
         match action {
             crate::panels::Action::DeleteBranch(name) => {
@@ -95,13 +85,14 @@ impl Confirmation {
             crate::panels::Action::StashDrop(idx) => Confirmation::DropStash(*idx),
             crate::panels::Action::StashPop(idx) => Confirmation::PopStash(*idx),
             crate::panels::Action::StashApply(idx) => Confirmation::ApplyStash(*idx),
-            crate::panels::Action::PushCurrent => Confirmation::ForcePush,
             crate::panels::Action::RemoveWorktree(path) => {
                 Confirmation::RemoveWorktree(path.clone())
             }
             crate::panels::Action::DeleteTag(name) => Confirmation::DeleteTag(name.clone()),
             crate::panels::Action::RemoveRemote(name) => Confirmation::RemoveRemote(name.clone()),
-            _ => Confirmation::ForcePush, // fallback, shouldn't reach here
+            _ => unreachable!(
+                "Confirmation::from_action called with an action that does not require confirmation"
+            ),
         }
     }
 }
@@ -139,15 +130,13 @@ impl ConfirmOption {
 pub struct ConfirmationDialog {
     pub confirmation: Confirmation,
     pub selected: usize,
-    pub styles: Styles,
 }
 
 impl ConfirmationDialog {
-    pub fn new(confirmation: Confirmation, styles: &Styles) -> Self {
+    pub fn new(confirmation: Confirmation) -> Self {
         Self {
             confirmation,
             selected: 0,
-            styles: styles.clone(),
         }
     }
 
@@ -170,10 +159,10 @@ impl ConfirmationDialog {
     }
 
     pub fn render(&self, f: &mut Frame, area: Rect) {
-        let width = 60.min(area.width.saturating_sub(4)).max(40);
-        let height = 10;
-        let x = (area.width - width) / 2;
-        let y = (area.height - height) / 2;
+        let width = 60.min(area.width.saturating_sub(4)).max(40).min(area.width);
+        let height = 10.min(area.height);
+        let x = area.width.saturating_sub(width) / 2;
+        let y = area.height.saturating_sub(height) / 2;
 
         let popup_area = Rect::new(x, y, width, height);
 
@@ -273,7 +262,7 @@ impl ConfirmationDialog {
         let footer_area = Rect::new(x + 1, y + height - 1, width - 2, 1);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " y/n: select  Enter: confirm  Esc: cancel ",
+                " y/n: confirm/cancel  j/k: select  Enter: confirm  Esc: cancel ",
                 Style::default().fg(Color::DarkGray),
             ))),
             footer_area,

@@ -161,13 +161,13 @@ impl App {
             // Poll completed background tasks and show results
             for result in self.async_task_manager.drain_completed() {
                 if result.ok {
-                    self.notifications.notify(&format!("{}: {}", result.label, result.message));
+                    self.notifications.notify(&result.message);
                     // Refresh views after successful commit/push/fetch
                     if result.label == "Commit" || result.label == "Push" || result.label == "Fetch" {
                         self.refresh_all();
                     }
                 } else {
-                    self.notifications.notify_error(&format!("{} failed: {}", result.label, result.message));
+                    self.notifications.notify_error(&result.message);
                 }
             }
         }
@@ -231,13 +231,16 @@ impl App {
                 KeyCode::Down | KeyCode::Char('j') => {
                     dialog.move_down();
                 }
-                KeyCode::Enter => {
+                KeyCode::Enter | KeyCode::Char('y') => {
                     let dialog = std::mem::take(&mut self.confirmation_dialog);
                     if let Some(d) = dialog {
                         if d.confirmed() {
-                            self.dispatch(d.confirmation.to_action());
+                            self.dispatch_confirmed(d.confirmation.to_action());
                         }
                     }
+                }
+                KeyCode::Char('n') | KeyCode::Char('c') => {
+                    self.confirmation_dialog = None;
                 }
                 _ => {}
             }
@@ -871,18 +874,22 @@ impl App {
                 | Action::StashDrop(_)
                 | Action::StashPop(_)
                 | Action::StashApply(_)
-                | Action::PushCurrent
                 | Action::RemoveWorktree(_)
                 | Action::DeleteTag(_)
                 | Action::RemoveRemote(_)
         ) {
             self.confirmation_dialog = Some(confirmation::ConfirmationDialog::new(
                 confirmation::Confirmation::from_action(&action),
-                &self.styles,
             ));
             return;
         }
 
+        self.dispatch_confirmed(action);
+    }
+
+    /// Execute an action directly, bypassing confirmation interception.
+    /// Called after the user has already confirmed via the dialog.
+    fn dispatch_confirmed(&mut self, action: Action) {
         match action {
             Action::Quit => {
                 self.should_quit = true;
