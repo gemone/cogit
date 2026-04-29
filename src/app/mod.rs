@@ -1145,28 +1145,14 @@ impl App {
                     }
                 }
             }
-            Action::PushCurrent => match self.repo.push_current() {
-                Ok(_) => {
-                    self.console_panel.record("Push", "current branch", "ok");
-                    self.notifications.notify("Pushed successfully");
-                    self.refresh_all();
-                }
-                Err(e) => {
-                    self.notifications
-                        .notify_error(&format!("Push failed: {}", e));
-                }
-            },
-            Action::FetchAll => match self.repo.fetch_all() {
-                Ok(_) => {
-                    self.console_panel.record("Fetch", "all remotes", "ok");
-                    self.notifications.notify("Fetched all remotes");
-                    self.refresh_all();
-                }
-                Err(e) => {
-                    self.notifications
-                        .notify_error(&format!("Fetch failed: {}", e));
-                }
-            },
+            Action::PushCurrent => {
+                let repo = self.repo.clone();
+                self.async_task_manager.spawn_push_current(repo);
+            }
+            Action::FetchAll => {
+                let repo = self.repo.clone();
+                self.async_task_manager.spawn_fetch_all(repo);
+            }
             Action::PullCurrent => match self.repo.pull_current() {
                 Ok(_) => {
                     self.console_panel.record("Pull", "current branch", "ok");
@@ -1988,6 +1974,13 @@ impl App {
                 self.styles.text_primary,
             ),
         ];
+        // Show running background task indicator
+        if let Some(ref label) = self.async_task_manager.running_label {
+            spans.push(Span::styled(
+                format!(" ⚙ {}...", label),
+                self.styles.highlight.add_modifier(Modifier::BOLD),
+            ));
+        }
         if let Some(shortcuts) = Self::mode_shortcuts(&self.keymap) {
             spans.push(Span::styled(
                 format!(" {} ", shortcuts),

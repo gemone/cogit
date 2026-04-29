@@ -161,6 +161,42 @@ impl TaskManager {
         })
     }
 
+    /// Spawn a git push_current operation in background.
+    pub fn spawn_push_current(&mut self, repo: Repository) -> usize {
+        let label = "Push".to_string();
+        let label_clone = label.clone();
+        self.spawn(label_clone, move || match repo.push_current() {
+            Ok(output) => TaskResult {
+                label: label.clone(),
+                message: format!("Push: {}", output),
+                ok: true,
+            },
+            Err(e) => TaskResult {
+                label: label.clone(),
+                message: format!("Push failed: {}", e),
+                ok: false,
+            },
+        })
+    }
+
+    /// Spawn a git fetch_all operation in background.
+    pub fn spawn_fetch_all(&mut self, repo: Repository) -> usize {
+        let label = "Fetch".to_string();
+        let label_clone = label.clone();
+        self.spawn(label_clone, move || match repo.fetch_all() {
+            Ok(output) => TaskResult {
+                label: label.clone(),
+                message: format!("Fetch all: {}", output),
+                ok: true,
+            },
+            Err(e) => TaskResult {
+                label: label.clone(),
+                message: format!("Fetch all failed: {}", e),
+                ok: false,
+            },
+        })
+    }
+
     /// Drain all completed tasks and return their results.
     pub fn drain_completed(&mut self) -> Vec<TaskResult> {
         let mut results = Vec::new();
