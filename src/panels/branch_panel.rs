@@ -69,9 +69,14 @@ impl Panel for BranchPanel {
             self.styles.border_inactive
         };
 
+        let current = Repository::open(&self.repo)
+            .ok()
+            .and_then(|r| r.current_branch().ok())
+            .unwrap_or_default();
+
         let title = if self.search_mode {
             format_panel_title(
-                &format!("Branches [search: {}]", self.search_query),
+                &format!("⎇ {} [search: {}]", current, self.search_query),
                 shortcut,
             )
         } else if let RebaseState::InProgress {
@@ -81,11 +86,11 @@ impl Panel for BranchPanel {
         } = &self.rebase_state
         {
             format_panel_title(
-                &format!("Branches [REBASE: {} {}/{}]", onto, done_count, total_count),
+                &format!("⎇ {} [REBASE: {} {}/{}]", current, onto, done_count, total_count),
                 shortcut,
             )
         } else {
-            format_panel_title(self.title(), shortcut)
+            format_panel_title(&format!("⎇ {}", current), shortcut)
         };
 
         let items: Vec<ListItem> = self
@@ -237,7 +242,7 @@ impl Panel for BranchPanel {
     }
 
     fn title(&self) -> &str {
-        "Branches"
+        "Branch"
     }
 
     fn refresh(&mut self) {

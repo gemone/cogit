@@ -1881,15 +1881,13 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
                 Constraint::Min(8),
                 Constraint::Length(1),
             ])
             .split(body_area);
 
-        self.draw_status_bar(f, chunks[0]);
-        self.draw_tiled_layout(f, chunks[1]);
-        self.draw_footer(f, chunks[2]);
+        self.draw_tiled_layout(f, chunks[0]);
+        self.draw_footer(f, chunks[1]);
 
         // Command line at bottom
         if self.cmdline.is_visible() {
