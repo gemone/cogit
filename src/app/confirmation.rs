@@ -12,7 +12,6 @@ use ratatui::{
 pub enum Confirmation {
     DeleteBranch(String),
     DropStash(usize),
-    ClearStash,
     ApplyStash(usize),
     PopStash(usize),
     RemoveWorktree(String),
@@ -25,7 +24,6 @@ impl Confirmation {
         match self {
             Confirmation::DeleteBranch(_) => "Delete Branch",
             Confirmation::DropStash(_) => "Drop Stash",
-            Confirmation::ClearStash => "Clear Stash",
             Confirmation::ApplyStash(_) => "Apply Stash",
             Confirmation::PopStash(_) => "Pop Stash",
             Confirmation::RemoveWorktree(_) => "Remove Worktree",
@@ -40,9 +38,6 @@ impl Confirmation {
                 format!("Delete branch '{}'? This cannot be undone.", name)
             }
             Confirmation::DropStash(idx) => format!("Drop stash #{}? This cannot be undone.", idx),
-            Confirmation::ClearStash => {
-                "Clear ALL stashes? This cannot be undone.".to_string()
-            }
             Confirmation::ApplyStash(idx) => format!("Apply stash #{}?", idx),
             Confirmation::PopStash(idx) => format!("Pop stash #{}?", idx),
             Confirmation::RemoveWorktree(path) => {
@@ -66,7 +61,6 @@ impl Confirmation {
         match self {
             Confirmation::DeleteBranch(name) => crate::panels::Action::DeleteBranch(name.clone()),
             Confirmation::DropStash(idx) => crate::panels::Action::StashDrop(*idx),
-            Confirmation::ClearStash => crate::panels::Action::StashDrop(usize::MAX), // special
             Confirmation::ApplyStash(idx) => crate::panels::Action::StashApply(*idx),
             Confirmation::PopStash(idx) => crate::panels::Action::StashPop(*idx),
             Confirmation::RemoveWorktree(path) => crate::panels::Action::RemoveWorktree(path.clone()),
@@ -177,7 +171,8 @@ impl ConfirmationDialog {
         );
 
         // Title
-        let title_area = Rect::new(x + 1, y + 1, width - 2, 1);
+        let inner_w = width.saturating_sub(2).max(1);
+        let title_area = Rect::new(x + 1, y + 1, inner_w, 1);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!(" {} ", self.confirmation.title()),
@@ -189,13 +184,13 @@ impl ConfirmationDialog {
         );
 
         // Message
-        let msg_area = Rect::new(x + 1, y + 3, width - 2, 2);
+        let msg_area = Rect::new(x + 1, y + 3, inner_w, 2);
         let msg_lines: Vec<Line> = self
             .confirmation
             .message()
             .chars()
             .collect::<Vec<_>>()
-            .chunks((width - 2) as usize)
+            .chunks(inner_w.max(1) as usize)
             .take(2)
             .map(|chunk| Line::from(Span::raw(chunk.iter().collect::<String>())))
             .collect();
@@ -205,7 +200,7 @@ impl ConfirmationDialog {
         );
 
         // Confirm option
-        let confirm_area = Rect::new(x + 2, y + 5, width - 4, 1);
+        let confirm_area = Rect::new(x + 2, y + 5, width.saturating_sub(4).max(1), 1);
         let confirm_is_selected = self.selected == 0;
         let confirm_prefix = if confirm_is_selected { "> " } else { "  " };
         let confirm_key_style = if confirm_is_selected {
@@ -232,7 +227,7 @@ impl ConfirmationDialog {
         );
 
         // Cancel option
-        let cancel_area = Rect::new(x + 2, y + 6, width - 4, 1);
+        let cancel_area = Rect::new(x + 2, y + 6, width.saturating_sub(4).max(1), 1);
         let cancel_is_selected = self.selected == 1;
         let cancel_prefix = if cancel_is_selected { "> " } else { "  " };
         let cancel_key_style = if cancel_is_selected {

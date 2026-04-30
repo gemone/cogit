@@ -24,6 +24,7 @@ pub struct BranchPanel {
     search_query: String,
     filtered_indices: Vec<usize>,
     rebase_state: RebaseState,
+    current_branch: String,
 }
 
 impl BranchPanel {
@@ -40,6 +41,7 @@ impl BranchPanel {
             search_query: String::new(),
             filtered_indices: Vec::new(),
             rebase_state: RebaseState::Idle,
+            current_branch: String::new(),
         };
         panel.refresh();
         panel
@@ -69,14 +71,9 @@ impl Panel for BranchPanel {
             self.styles.border_inactive
         };
 
-        let current = Repository::open(&self.repo)
-            .ok()
-            .and_then(|r| r.current_branch().ok())
-            .unwrap_or_default();
-
         let title = if self.search_mode {
             format_panel_title(
-                &format!("⎇ {} [search: {}]", current, self.search_query),
+                &format!("⎇ {} [search: {}]", self.current_branch, self.search_query),
                 shortcut,
             )
         } else if let RebaseState::InProgress {
@@ -86,11 +83,11 @@ impl Panel for BranchPanel {
         } = &self.rebase_state
         {
             format_panel_title(
-                &format!("⎇ {} [REBASE: {} {}/{}]", current, onto, done_count, total_count),
+                &format!("⎇ {} [REBASE: {} {}/{}]", self.current_branch, onto, done_count, total_count),
                 shortcut,
             )
         } else {
-            format_panel_title(&format!("⎇ {}", current), shortcut)
+            format_panel_title(&format!("⎇ {}", self.current_branch), shortcut)
         };
 
         let items: Vec<ListItem> = self
@@ -249,6 +246,7 @@ impl Panel for BranchPanel {
         if let Ok(repo) = Repository::open(&self.repo) {
             self.branches = repo.branches().unwrap_or_default();
             self.rebase_state = repo.get_rebase_state().unwrap_or(RebaseState::Idle);
+            self.current_branch = repo.current_branch().unwrap_or_default();
         }
         self.apply_filter();
         if self.filtered_indices.is_empty() {

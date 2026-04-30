@@ -148,7 +148,7 @@ impl Panel for ShelvePanel {
         let help_text = if self.input_mode {
             "Enter:confirm Esc:cancel"
         } else {
-            "n:new d:drop Enter:diff ?:help"
+            "Enter:pop a:apply d:drop Space:diff ?:help"
         };
         let help = Paragraph::new(help_text).style(self.styles.text_secondary);
         let help_area = Rect {
@@ -230,13 +230,13 @@ impl Panel for ShelvePanel {
             }
             KeyCode::Enter => {
                 if let Some(idx) = self.selected_index() {
-                    return Some(Action::ShelveApply(idx, false));
+                    return Some(Action::ShelveApply(idx, true));
                 }
                 None
             }
             KeyCode::Char('a') => {
                 if let Some(idx) = self.selected_index() {
-                    return Some(Action::ShelveApply(idx, true));
+                    return Some(Action::ShelveApply(idx, false));
                 }
                 None
             }

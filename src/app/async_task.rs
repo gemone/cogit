@@ -61,17 +61,19 @@ impl TaskHandle {
     pub fn is_done(&self) -> bool {
         matches!(self, TaskHandle::Done(_))
     }
+
+    pub fn is_running(&self) -> bool {
+        matches!(self, TaskHandle::Running(_))
+    }
 }
 
 /// Manages all background tasks for the application.
 #[derive(Debug)]
 pub struct TaskManager {
-    /// Pending tasks with an incrementing ID
-    tasks: VecDeque<(usize, TaskHandle)>,
+    /// Pending tasks with an incrementing ID and label
+    tasks: VecDeque<(usize, String, TaskHandle)>,
     /// Next task ID to assign
     next_id: usize,
-    /// Label of the currently running task (for UI display)
-    pub running_label: Option<String>,
 }
 
 impl TaskManager {
@@ -79,8 +81,15 @@ impl TaskManager {
         Self {
             tasks: VecDeque::new(),
             next_id: 1,
-            running_label: None,
         }
+    }
+
+    /// Returns the label of the first running task, if any.
+    pub fn running_label(&self) -> Option<&str> {
+        self.tasks
+            .iter()
+            .find(|(_, _, h)| h.is_running())
+            .map(|(_, label, _)| label.as_str())
     }
 
     /// Spawn a background task that runs `op()` in a thread.
@@ -98,8 +107,7 @@ impl TaskManager {
 
         let id = self.next_id;
         self.next_id += 1;
-        self.running_label = Some(label);
-        self.tasks.push_back((id, TaskHandle::Running(rx)));
+        self.tasks.push_back((id, label, TaskHandle::Running(rx)));
         id
     }
 
@@ -210,15 +218,12 @@ impl TaskManager {
     /// Drain all completed tasks and return their results.
     pub fn drain_completed(&mut self) -> Vec<TaskResult> {
         let mut results = Vec::new();
-        for (_, handle) in &mut self.tasks {
+        for (_, _, handle) in &mut self.tasks {
             if let Some(result) = handle.try_take() {
                 results.push(result);
             }
         }
-        self.tasks.retain(|(_, handle)| !handle.is_done());
-        if self.tasks.is_empty() {
-            self.running_label = None;
-        }
+        self.tasks.retain(|(_, _, handle)| !handle.is_done());
         results
     }
 
@@ -248,7 +253,7 @@ mod tests {
             ok: true,
         });
         assert!(mgr.has_running());
-        assert!(mgr.running_label.is_some());
+        assert!(mgr.running_label().is_some());
 
         // Give thread time to complete
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -258,7 +263,7 @@ mod tests {
         assert!(results[0].ok);
         assert_eq!(results[0].message, "done");
         assert!(!mgr.has_running());
-        assert!(mgr.running_label.is_none());
+        assert!(mgr.running_label().is_none());
     }
 
     #[test]

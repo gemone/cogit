@@ -1980,7 +1980,7 @@ impl App {
             ),
         ];
         // Show running background task indicator
-        if let Some(ref label) = self.async_task_manager.running_label {
+        if let Some(label) = self.async_task_manager.running_label() {
             spans.push(Span::styled(
                 format!(" ⚙ {}...", label),
                 self.styles.highlight.add_modifier(Modifier::BOLD),
@@ -2016,6 +2016,9 @@ impl App {
             format!("[active:{}]", self.layout.active_label()),
             format!("[keymap:{}]", self.keymap.preset_name()),
         ];
+        if let Some(label) = self.async_task_manager.running_label() {
+            footer_parts.push(format!("[⚙ {}...]", label));
+        }
         for hint in self.keymap.bindings_for(KeyContext::Global) {
             footer_parts.push(format!("{}:{}", hint.key, hint.description));
         }
