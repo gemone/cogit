@@ -425,20 +425,8 @@ impl App {
                 }
                 KeyCode::Char('f') => {
                     if let Some((name, _)) = self.pending_checkout.take() {
-                        // Force Checkout: discard local changes and checkout
-                        match self.repo.checkout_force(&name) {
-                            Ok(_) => {
-                                self.notifications.notify(&format!(
-                                    "Force checkout: switched to {} (local changes discarded)",
-                                    name
-                                ));
-                                self.refresh_all();
-                            }
-                            Err(e) => {
-                                self.notifications
-                                    .notify_error(&format!("Force checkout failed: {}", e));
-                            }
-                        }
+                        // Route through confirmation dialog
+                        self.dispatch(Action::ForceCheckout(name));
                     }
                 }
                 KeyCode::Char('q') | KeyCode::Esc => {
@@ -510,7 +498,10 @@ impl App {
 
         // Help overlay takes priority
         if self.help_overlay.is_visible() {
-            self.help_overlay.handle_key(key);
+            if let Some(action) = self.help_overlay.handle_key(key) {
+                self.help_overlay.close();
+                self.dispatch(action);
+            }
             return;
         }
 
@@ -877,6 +868,7 @@ impl App {
                 | Action::RemoveWorktree(_)
                 | Action::DeleteTag(_)
                 | Action::RemoveRemote(_)
+                | Action::ForceCheckout(_)
         ) {
             self.confirmation_dialog = Some(confirmation::ConfirmationDialog::new(
                 confirmation::Confirmation::from_action(&action),
@@ -1152,6 +1144,19 @@ impl App {
                     }
                 }
             }
+            Action::ForceCheckout(name) => match self.repo.checkout_force(&name) {
+                Ok(_) => {
+                    self.notifications.notify(&format!(
+                        "Force checkout: switched to {} (local changes discarded)",
+                        name
+                    ));
+                    self.refresh_all();
+                }
+                Err(e) => {
+                    self.notifications
+                        .notify_error(&format!("Force checkout failed: {}", e));
+                }
+            },
             Action::PushCurrent => {
                 let repo = self.repo.clone();
                 self.async_task_manager.spawn_push_current(repo);
@@ -1452,7 +1457,7 @@ impl App {
                 }
             },
             Action::Help => {
-                self.help_overlay.open();
+                self.help_overlay.open(&self.keymap, &self.view, &self.mode);
             }
             Action::ShowDiff(path) => {
                 let content = self
@@ -1883,11 +1888,13 @@ impl App {
             .constraints([
                 Constraint::Min(8),
                 Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(body_area);
 
         self.draw_tiled_layout(f, chunks[0]);
-        self.draw_footer(f, chunks[1]);
+        self.draw_status_bar(f, chunks[1]);
+        self.draw_footer(f, chunks[2]);
 
         // Command line at bottom
         if self.cmdline.is_visible() {
@@ -1947,7 +1954,7 @@ impl App {
 
         // Confirmation dialog overlay
         if let Some(ref dialog) = self.confirmation_dialog {
-            dialog.render(f, size);
+            dialog.render(f, size, &self.styles);
         }
 
         // Notifications on top of everything

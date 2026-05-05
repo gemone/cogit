@@ -52,6 +52,7 @@ impl KeyContext {
 pub struct KeyBindingHint {
     pub key: String,
     pub description: &'static str,
+    pub action: Option<Action>,
 }
 
 #[derive(Debug, Clone)]
@@ -168,6 +169,7 @@ impl KeymapManager {
                     .map(|spec| KeyBindingHint {
                         key: spec.key.clone(),
                         description: spec.description,
+                        action: spec.action.clone(),
                     })
                     .collect()
             })

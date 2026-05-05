@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::app::{
+    Action,
     popup::{
         centered_popup_area, popup_block, popup_inner_area_without_footer, popup_style,
         render_popup_background,
@@ -22,10 +23,18 @@ use crate::{
     vimkeys::Mode,
 };
 
+/// A display line in the help overlay — either a section header or a binding.
+enum HelpLine {
+    Header(String),
+    Binding(KeyBindingHint),
+}
+
 pub struct HelpOverlay {
     visible: bool,
     scroll: u16,
     styles: Styles,
+    lines: Vec<HelpLine>,
+    selected: usize, // index into actionable binding positions
 }
 
 impl HelpOverlay {
@@ -34,12 +43,16 @@ impl HelpOverlay {
             visible: false,
             scroll: 0,
             styles: styles.clone(),
+            lines: Vec::new(),
+            selected: 0,
         }
     }
 
-    pub fn open(&mut self) {
+    pub fn open(&mut self, keymap: &KeymapManager, view: &View, mode: &Mode) {
         self.visible = true;
         self.scroll = 0;
+        self.selected = 0;
+        self.build_lines(keymap, view, mode);
     }
 
     pub fn close(&mut self) {
@@ -50,16 +63,114 @@ impl HelpOverlay {
         self.visible
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) {
+    /// Indices of lines that contain actionable bindings.
+    fn actionable_indices(&self) -> Vec<usize> {
+        self.lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| matches!(l, HelpLine::Binding(b) if b.action.is_some()))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => self.close(),
-            KeyCode::Char('j') | KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
-            KeyCode::Char('k') | KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
-            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
-            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::Char('G') => self.scroll = u16::MAX,
-            KeyCode::Char('g') => self.scroll = 0,
-            _ => {}
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                self.close();
+                None
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let indices = self.actionable_indices();
+                if let Some(pos) = indices.iter().position(|&i| i == self.selected) {
+                    if pos + 1 < indices.len() {
+                        self.selected = indices[pos + 1];
+                    }
+                }
+                self.ensure_visible();
+                None
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let indices = self.actionable_indices();
+                if let Some(pos) = indices.iter().position(|&i| i == self.selected) {
+                    if pos > 0 {
+                        self.selected = indices[pos - 1];
+                    }
+                }
+                self.ensure_visible();
+                None
+            }
+            KeyCode::PageDown => {
+                self.scroll = self.scroll.saturating_add(10);
+                None
+            }
+            KeyCode::PageUp => {
+                self.scroll = self.scroll.saturating_sub(10);
+                None
+            }
+            KeyCode::Char('G') => {
+                let indices = self.actionable_indices();
+                if let Some(&last) = indices.last() {
+                    self.selected = last;
+                }
+                self.ensure_visible();
+                None
+            }
+            KeyCode::Char('g') => {
+                let indices = self.actionable_indices();
+                if let Some(&first) = indices.first() {
+                    self.selected = first;
+                }
+                self.scroll = 0;
+                None
+            }
+            KeyCode::Enter => {
+                if let HelpLine::Binding(ref b) = self.lines[self.selected] {
+                    return b.action.clone();
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Adjust scroll so the selected line is visible.
+    fn ensure_visible(&mut self) {
+        let sel = self.selected as u16;
+        if sel < self.scroll {
+            self.scroll = sel;
+        } else if sel >= self.scroll + 15 {
+            self.scroll = sel.saturating_sub(14);
+        }
+    }
+
+    fn build_lines(&mut self, keymap: &KeymapManager, view: &View, mode: &Mode) {
+        self.lines.clear();
+
+        self.lines.push(HelpLine::Header(format!(
+            "Preset: {}",
+            keymap.preset_name()
+        )));
+        self.lines.push(HelpLine::Header(
+            "j/k: navigate  Enter: execute  Esc: close".to_string(),
+        ));
+
+        push_section_lines(
+            &mut self.lines,
+            "Global",
+            keymap.bindings_for(KeyContext::Global),
+        );
+        push_section_lines(
+            &mut self.lines,
+            section_title(view),
+            keymap.bindings_for(section_context(view)),
+        );
+
+        if *mode == Mode::Command {
+            self.lines.push(HelpLine::Header(String::new()));
+            self.lines.push(HelpLine::Header("Command mode".to_string()));
+            self.lines.push(HelpLine::Header(
+                "  :keymap vim | :keymap helix".to_string(),
+            ));
         }
     }
 
@@ -68,8 +179,8 @@ impl HelpOverlay {
         f: &mut Frame,
         area: Rect,
         keymap: &KeymapManager,
-        view: &View,
-        mode: &Mode,
+        _view: &View,
+        _mode: &Mode,
     ) {
         if !self.visible {
             return;
@@ -83,67 +194,62 @@ impl HelpOverlay {
         f.render_widget(border, popup_area);
 
         let inner = popup_inner_area_without_footer(popup_area);
-        let paragraph = Paragraph::new(self.content_lines(keymap, view, mode))
+        let content_lines = self.render_lines();
+        let paragraph = Paragraph::new(content_lines)
             .style(popup_style().fg(self.styles.text_primary.fg.unwrap_or(Color::White)))
             .scroll((self.scroll, 0));
         f.render_widget(paragraph, inner);
     }
 
-    fn content_lines(
-        &self,
-        keymap: &KeymapManager,
-        view: &View,
-        mode: &Mode,
-    ) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-        lines.push(Line::from(vec![Span::styled(
-            format!("Preset: {}", keymap.preset_name()),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )]));
-        lines.push(Line::from(vec![Span::styled(
-            "Close: Esc / q / ?    Scroll: j/k, PgUp/PgDn, G/g",
-            self.styles.text_secondary,
-        )]));
-        lines.push(Line::from(""));
-
-        push_section(
-            &mut lines,
-            "Global",
-            keymap.bindings_for(KeyContext::Global),
-        );
-        push_section(
-            &mut lines,
-            section_title(view),
-            keymap.bindings_for(section_context(view)),
-        );
-
-        if *mode == Mode::Command {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![Span::styled(
-                "Command mode",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )]));
-            lines.push(Line::from(vec![Span::styled(
-                "  :keymap vim | :keymap helix",
-                self.styles.text_primary,
-            )]));
-        }
-
-        lines
+    fn render_lines(&self) -> Vec<Line<'static>> {
+        self.lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| match line {
+                HelpLine::Header(text) => {
+                    if text.starts_with("Preset:") || text == "Command mode" {
+                        Line::from(Span::styled(
+                            text.clone(),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ))
+                    } else {
+                        Line::from(Span::styled(text.clone(), self.styles.text_secondary))
+                    }
+                }
+                HelpLine::Binding(b) => {
+                    let is_selected = i == self.selected && b.action.is_some();
+                    let prefix = if is_selected { "> " } else { "  " };
+                    let key_style = if is_selected {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    };
+                    let desc_style = if is_selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    Line::from(vec![
+                        Span::styled(prefix.to_string(), desc_style),
+                        Span::styled(format!("{:<12}", b.key), key_style),
+                        Span::styled(b.description.to_string(), desc_style),
+                    ])
+                }
+            })
+            .collect()
     }
 
     #[cfg(test)]
-    pub(crate) fn debug_lines(
-        &self,
-        keymap: &KeymapManager,
-        view: &View,
-        mode: &Mode,
-    ) -> Vec<Line<'static>> {
-        self.content_lines(keymap, view, mode)
+    pub(crate) fn debug_lines(&self) -> Vec<Line<'static>> {
+        self.render_lines()
     }
 }
 
@@ -161,9 +267,9 @@ mod tests {
     fn help_overlay_lists_native_mode_shortcuts_in_global_section() {
         let mut overlay = HelpOverlay::new(&Styles::default());
         let keymap = KeymapManager::new(&CogitConfig::default());
-        overlay.open();
+        overlay.open(&keymap, &View::Main, &Mode::Normal);
 
-        let lines = overlay.debug_lines(&keymap, &View::Main, &Mode::Normal);
+        let lines = overlay.debug_lines();
         let rendered = lines
             .iter()
             .flat_map(|line| line.spans.iter())
@@ -185,7 +291,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut overlay = HelpOverlay::new(&Styles::default());
         let keymap = KeymapManager::new(&CogitConfig::default());
-        overlay.open();
+        overlay.open(&keymap, &View::Main, &Mode::Normal);
 
         terminal
             .draw(|f| {
@@ -202,23 +308,10 @@ mod tests {
     }
 }
 
-fn push_section(lines: &mut Vec<Line<'static>>, title: &str, hints: Vec<KeyBindingHint>) {
-    lines.push(Line::from(vec![Span::styled(
-        title.to_string(),
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    )]));
+fn push_section_lines(lines: &mut Vec<HelpLine>, title: &str, hints: Vec<KeyBindingHint>) {
+    lines.push(HelpLine::Header(title.to_string()));
     for hint in hints {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("  {:<12}", hint.key),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(hint.description, Style::default().fg(Color::White)),
-        ]));
+        lines.push(HelpLine::Binding(hint));
     }
 }
 
