@@ -6,6 +6,8 @@ use ratatui::{
     Frame,
 };
 
+use super::styles::Styles;
+
 /// Represents a pending dangerous action awaiting user confirmation.
 /// Each variant holds the data needed to construct and dispatch the real Action.
 #[derive(Debug, Clone)]
@@ -17,6 +19,7 @@ pub enum Confirmation {
     RemoveWorktree(String),
     DeleteTag(String),
     RemoveRemote(String),
+    ForceCheckout(String),
 }
 
 impl Confirmation {
@@ -29,6 +32,7 @@ impl Confirmation {
             Confirmation::RemoveWorktree(_) => "Remove Worktree",
             Confirmation::DeleteTag(_) => "Delete Tag",
             Confirmation::RemoveRemote(_) => "Remove Remote",
+            Confirmation::ForceCheckout(_) => "Force Checkout",
         }
     }
 
@@ -49,6 +53,12 @@ impl Confirmation {
             Confirmation::RemoveRemote(name) => {
                 format!("Remove remote '{}'? This cannot be undone.", name)
             }
+            Confirmation::ForceCheckout(name) => {
+                format!(
+                    "Force checkout to '{}'? Local changes will be discarded.",
+                    name
+                )
+            }
         }
     }
 
@@ -66,6 +76,7 @@ impl Confirmation {
             Confirmation::RemoveWorktree(path) => crate::panels::Action::RemoveWorktree(path.clone()),
             Confirmation::DeleteTag(name) => crate::panels::Action::DeleteTag(name.clone()),
             Confirmation::RemoveRemote(name) => crate::panels::Action::RemoveRemote(name.clone()),
+            Confirmation::ForceCheckout(name) => crate::panels::Action::ForceCheckout(name.clone()),
         }
     }
 
@@ -84,6 +95,7 @@ impl Confirmation {
             }
             crate::panels::Action::DeleteTag(name) => Confirmation::DeleteTag(name.clone()),
             crate::panels::Action::RemoveRemote(name) => Confirmation::RemoveRemote(name.clone()),
+            crate::panels::Action::ForceCheckout(name) => Confirmation::ForceCheckout(name.clone()),
             _ => unreachable!(
                 "Confirmation::from_action called with an action that does not require confirmation"
             ),
@@ -152,7 +164,7 @@ impl ConfirmationDialog {
         self.selected == 0
     }
 
-    pub fn render(&self, f: &mut Frame, area: Rect) {
+    pub fn render(&self, f: &mut Frame, area: Rect, styles: &Styles) {
         let width = 60.min(area.width.saturating_sub(4)).max(40).min(area.width);
         let height = 9.min(area.height);
         let x = area.width.saturating_sub(width) / 2;
@@ -166,7 +178,7 @@ impl ConfirmationDialog {
             Block::default()
                 .style(Style::default().bg(Color::Black).fg(Color::White))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::White)),
+                .border_style(styles.border_active),
             popup_area,
         );
 
@@ -176,9 +188,7 @@ impl ConfirmationDialog {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!(" {} ", self.confirmation.title()),
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .fg(Color::White),
+                styles.text_primary.add_modifier(Modifier::BOLD),
             ))),
             title_area,
         );
@@ -195,7 +205,7 @@ impl ConfirmationDialog {
             .map(|chunk| Line::from(Span::raw(chunk.iter().collect::<String>())))
             .collect();
         f.render_widget(
-            Paragraph::new(msg_lines).style(Style::default().fg(Color::LightGreen)),
+            Paragraph::new(msg_lines).style(styles.addition),
             msg_area,
         );
 
@@ -204,18 +214,14 @@ impl ConfirmationDialog {
         let confirm_is_selected = self.selected == 0;
         let confirm_prefix = if confirm_is_selected { "> " } else { "  " };
         let confirm_key_style = if confirm_is_selected {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            styles.highlight
         } else {
-            Style::default().fg(Color::LightYellow)
+            styles.text_primary.fg(Color::LightYellow)
         };
         let confirm_label_style = if confirm_is_selected {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            styles.text_primary.add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Gray)
+            styles.text_secondary
         };
         f.render_widget(
             Paragraph::new(Line::from(vec![
@@ -231,18 +237,14 @@ impl ConfirmationDialog {
         let cancel_is_selected = self.selected == 1;
         let cancel_prefix = if cancel_is_selected { "> " } else { "  " };
         let cancel_key_style = if cancel_is_selected {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            styles.highlight
         } else {
-            Style::default().fg(Color::LightYellow)
+            styles.text_primary.fg(Color::LightYellow)
         };
         let cancel_label_style = if cancel_is_selected {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            styles.text_primary.add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Gray)
+            styles.text_secondary
         };
         f.render_widget(
             Paragraph::new(Line::from(vec![
@@ -251,6 +253,16 @@ impl ConfirmationDialog {
                 Span::styled("Cancel", cancel_label_style),
             ])),
             cancel_area,
+        );
+
+        // Footer hint
+        let hint_area = Rect::new(x + 1, y + height.saturating_sub(1), inner_w, 1);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " j/k: select  y/n: quick  Enter: confirm  Esc: cancel ",
+                styles.text_secondary,
+            ))),
+            hint_area,
         );
     }
 }
