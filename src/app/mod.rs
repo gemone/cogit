@@ -239,7 +239,7 @@ impl App {
                         }
                     }
                 }
-                KeyCode::Char('n') | KeyCode::Char('c') => {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('c') | KeyCode::Char('q') => {
                     self.confirmation_dialog = None;
                 }
                 _ => {}
@@ -859,20 +859,8 @@ impl App {
 
     fn dispatch(&mut self, action: Action) {
         // Intercept dangerous actions and show confirmation dialog first
-        if matches!(
-            action,
-            Action::DeleteBranch(_)
-                | Action::StashDrop(_)
-                | Action::StashPop(_)
-                | Action::StashApply(_)
-                | Action::RemoveWorktree(_)
-                | Action::DeleteTag(_)
-                | Action::RemoveRemote(_)
-                | Action::ForceCheckout(_)
-        ) {
-            self.confirmation_dialog = Some(confirmation::ConfirmationDialog::new(
-                confirmation::Confirmation::from_action(&action),
-            ));
+        if let Some(conf) = confirmation::Confirmation::from_action(&action) {
+            self.confirmation_dialog = Some(confirmation::ConfirmationDialog::new(conf));
             return;
         }
 

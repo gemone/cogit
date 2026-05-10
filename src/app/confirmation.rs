@@ -62,10 +62,6 @@ impl Confirmation {
         }
     }
 
-    pub fn confirm_label(&self) -> &'static str {
-        "Confirm"
-    }
-
     /// Returns the action to dispatch on confirmation (index 0 = confirm)
     pub fn to_action(&self) -> crate::panels::Action {
         match self {
@@ -80,53 +76,25 @@ impl Confirmation {
         }
     }
 
-    /// Build a Confirmation from an Action (for dangerous actions intercepted at dispatch).
-    /// Only called for actions that are in the dispatch interception list.
-    pub fn from_action(action: &crate::panels::Action) -> Self {
+    pub fn from_action(action: &crate::panels::Action) -> Option<Self> {
         match action {
             crate::panels::Action::DeleteBranch(name) => {
-                Confirmation::DeleteBranch(name.clone())
+                Some(Confirmation::DeleteBranch(name.clone()))
             }
-            crate::panels::Action::StashDrop(idx) => Confirmation::DropStash(*idx),
-            crate::panels::Action::StashPop(idx) => Confirmation::PopStash(*idx),
-            crate::panels::Action::StashApply(idx) => Confirmation::ApplyStash(*idx),
+            crate::panels::Action::StashDrop(idx) => Some(Confirmation::DropStash(*idx)),
+            crate::panels::Action::StashPop(idx) => Some(Confirmation::PopStash(*idx)),
+            crate::panels::Action::StashApply(idx) => Some(Confirmation::ApplyStash(*idx)),
             crate::panels::Action::RemoveWorktree(path) => {
-                Confirmation::RemoveWorktree(path.clone())
+                Some(Confirmation::RemoveWorktree(path.clone()))
             }
-            crate::panels::Action::DeleteTag(name) => Confirmation::DeleteTag(name.clone()),
-            crate::panels::Action::RemoveRemote(name) => Confirmation::RemoveRemote(name.clone()),
-            crate::panels::Action::ForceCheckout(name) => Confirmation::ForceCheckout(name.clone()),
-            _ => unreachable!(
-                "Confirmation::from_action called with an action that does not require confirmation"
-            ),
-        }
-    }
-}
-#[derive(Debug, Clone)]
-pub struct ConfirmOption {
-    pub label: String,
-    pub action_label: String,
-}
-
-impl ConfirmOption {
-    pub fn yes() -> Self {
-        Self {
-            label: "Yes".to_string(),
-            action_label: "y".to_string(),
-        }
-    }
-
-    pub fn no() -> Self {
-        Self {
-            label: "No".to_string(),
-            action_label: "n".to_string(),
-        }
-    }
-
-    pub fn cancel() -> Self {
-        Self {
-            label: "Cancel".to_string(),
-            action_label: "c".to_string(),
+            crate::panels::Action::DeleteTag(name) => Some(Confirmation::DeleteTag(name.clone())),
+            crate::panels::Action::RemoveRemote(name) => {
+                Some(Confirmation::RemoveRemote(name.clone()))
+            }
+            crate::panels::Action::ForceCheckout(name) => {
+                Some(Confirmation::ForceCheckout(name.clone()))
+            }
+            _ => None,
         }
     }
 }
@@ -209,51 +177,11 @@ impl ConfirmationDialog {
             msg_area,
         );
 
-        // Confirm option
-        let confirm_area = Rect::new(x + 2, y + 5, width.saturating_sub(4).max(1), 1);
-        let confirm_is_selected = self.selected == 0;
-        let confirm_prefix = if confirm_is_selected { "> " } else { "  " };
-        let confirm_key_style = if confirm_is_selected {
-            styles.highlight
-        } else {
-            styles.text_primary.fg(Color::LightYellow)
-        };
-        let confirm_label_style = if confirm_is_selected {
-            styles.text_primary.add_modifier(Modifier::BOLD)
-        } else {
-            styles.text_secondary
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::raw(confirm_prefix),
-                Span::styled(format!("[y] "), confirm_key_style),
-                Span::styled(self.confirmation.confirm_label(), confirm_label_style),
-            ])),
-            confirm_area,
-        );
-
-        // Cancel option
-        let cancel_area = Rect::new(x + 2, y + 6, width.saturating_sub(4).max(1), 1);
-        let cancel_is_selected = self.selected == 1;
-        let cancel_prefix = if cancel_is_selected { "> " } else { "  " };
-        let cancel_key_style = if cancel_is_selected {
-            styles.highlight
-        } else {
-            styles.text_primary.fg(Color::LightYellow)
-        };
-        let cancel_label_style = if cancel_is_selected {
-            styles.text_primary.add_modifier(Modifier::BOLD)
-        } else {
-            styles.text_secondary
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::raw(cancel_prefix),
-                Span::styled("[n] ", cancel_key_style),
-                Span::styled("Cancel", cancel_label_style),
-            ])),
-            cancel_area,
-        );
+        // Confirm + Cancel options
+        let inner_x = x + 2;
+        let inner_w_opt = width.saturating_sub(4).max(1);
+        self.render_option(f, inner_x, y + 5, inner_w_opt, "y", "Confirm", 0, styles);
+        self.render_option(f, inner_x, y + 6, inner_w_opt, "n", "Cancel", 1, styles);
 
         // Footer hint
         let hint_area = Rect::new(x + 1, y + height.saturating_sub(1), inner_w, 1);
@@ -263,6 +191,40 @@ impl ConfirmationDialog {
                 styles.text_secondary,
             ))),
             hint_area,
+        );
+    }
+
+    fn render_option(
+        &self,
+        f: &mut Frame,
+        x: u16,
+        y: u16,
+        width: u16,
+        key: &str,
+        label: &str,
+        index: usize,
+        styles: &Styles,
+    ) {
+        let area = Rect::new(x, y, width, 1);
+        let is_selected = self.selected == index;
+        let prefix = if is_selected { "> " } else { "  " };
+        let key_style = if is_selected {
+            styles.highlight
+        } else {
+            styles.text_primary.fg(Color::LightYellow)
+        };
+        let label_style = if is_selected {
+            styles.text_primary.add_modifier(Modifier::BOLD)
+        } else {
+            styles.text_secondary
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw(prefix),
+                Span::styled(format!("[{}] ", key), key_style),
+                Span::styled(label.to_string(), label_style),
+            ])),
+            area,
         );
     }
 }

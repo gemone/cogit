@@ -9,6 +9,22 @@ use std::{
 
 use crate::gitops::Repository;
 
+fn ok(label: &str, message: String) -> TaskResult {
+    TaskResult {
+        label: label.to_string(),
+        message,
+        ok: true,
+    }
+}
+
+fn fail(label: &str, message: String) -> TaskResult {
+    TaskResult {
+        label: label.to_string(),
+        message,
+        ok: false,
+    }
+}
+
 /// A completed background task with its result message.
 #[derive(Debug, Clone)]
 pub struct TaskResult {
@@ -113,105 +129,25 @@ impl TaskManager {
 
     /// Spawn a git commit operation in background.
     pub fn spawn_commit(&mut self, repo: Repository, message: String) -> usize {
-        let label = "Commit".to_string();
-        let label_clone = label.clone();
-        self.spawn(label_clone, move || match repo.commit(&message) {
-            Ok(_) => TaskResult {
-                label: label.clone(),
-                message: format!("Committed: {}", message),
-                ok: true,
-            },
-            Err(e) => TaskResult {
-                label: label.clone(),
-                message: format!("Commit failed: {}", e),
-                ok: false,
-            },
-        })
-    }
-
-    /// Spawn a git push operation in background.
-    pub fn spawn_push(&mut self, repo: Repository, remote: String, branch: String) -> usize {
-        let label = "Push".to_string();
-        let label_clone = label.clone();
-        self.spawn(label_clone, move || match repo.push(&remote, &branch) {
-            Ok(output) => TaskResult {
-                label: label.clone(),
-                message: format!("Push: {}", output),
-                ok: true,
-            },
-            Err(e) => TaskResult {
-                label: label.clone(),
-                message: format!("Push failed: {}", e),
-                ok: false,
-            },
-        })
-    }
-
-    /// Spawn a git fetch operation in background.
-    pub fn spawn_fetch(&mut self, repo: Repository, remote: Option<String>) -> usize {
-        let label = "Fetch".to_string();
-        let label_clone = label.clone();
-        self.spawn(label_clone, move || match remote {
-            Some(r) => match repo.fetch(&r) {
-                Ok(output) => TaskResult {
-                    label: label.clone(),
-                    message: format!("Fetch {}: {}", r, output),
-                    ok: true,
-                },
-                Err(e) => TaskResult {
-                    label: label.clone(),
-                    message: format!("Fetch {} failed: {}", r, e),
-                    ok: false,
-                },
-            },
-            None => match repo.fetch_all() {
-                Ok(output) => TaskResult {
-                    label: label.clone(),
-                    message: format!("Fetch all: {}", output),
-                    ok: true,
-                },
-                Err(e) => TaskResult {
-                    label: label.clone(),
-                    message: format!("Fetch all failed: {}", e),
-                    ok: false,
-                },
-            },
+        self.spawn("Commit".into(), move || match repo.commit(&message) {
+            Ok(_) => ok("Commit", format!("Committed: {}", message)),
+            Err(e) => fail("Commit", format!("Commit failed: {}", e)),
         })
     }
 
     /// Spawn a git push_current operation in background.
     pub fn spawn_push_current(&mut self, repo: Repository) -> usize {
-        let label = "Push".to_string();
-        let label_clone = label.clone();
-        self.spawn(label_clone, move || match repo.push_current() {
-            Ok(output) => TaskResult {
-                label: label.clone(),
-                message: format!("Push: {}", output),
-                ok: true,
-            },
-            Err(e) => TaskResult {
-                label: label.clone(),
-                message: format!("Push failed: {}", e),
-                ok: false,
-            },
+        self.spawn("Push".into(), move || match repo.push_current() {
+            Ok(output) => ok("Push", format!("Push: {}", output)),
+            Err(e) => fail("Push", format!("Push failed: {}", e)),
         })
     }
 
     /// Spawn a git fetch_all operation in background.
     pub fn spawn_fetch_all(&mut self, repo: Repository) -> usize {
-        let label = "Fetch".to_string();
-        let label_clone = label.clone();
-        self.spawn(label_clone, move || match repo.fetch_all() {
-            Ok(output) => TaskResult {
-                label: label.clone(),
-                message: format!("Fetch all: {}", output),
-                ok: true,
-            },
-            Err(e) => TaskResult {
-                label: label.clone(),
-                message: format!("Fetch all failed: {}", e),
-                ok: false,
-            },
+        self.spawn("Fetch".into(), move || match repo.fetch_all() {
+            Ok(output) => ok("Fetch", format!("Fetch all: {}", output)),
+            Err(e) => fail("Fetch", format!("Fetch all failed: {}", e)),
         })
     }
 
@@ -228,7 +164,7 @@ impl TaskManager {
     }
 
     pub fn has_running(&self) -> bool {
-        !self.tasks.is_empty()
+        self.tasks.iter().any(|(_, _, h)| h.is_running())
     }
 }
 

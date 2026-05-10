@@ -80,23 +80,11 @@ impl HelpOverlay {
                 None
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                let indices = self.actionable_indices();
-                if let Some(pos) = indices.iter().position(|&i| i == self.selected) {
-                    if pos + 1 < indices.len() {
-                        self.selected = indices[pos + 1];
-                    }
-                }
-                self.ensure_visible();
+                self.move_selection(1);
                 None
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                let indices = self.actionable_indices();
-                if let Some(pos) = indices.iter().position(|&i| i == self.selected) {
-                    if pos > 0 {
-                        self.selected = indices[pos - 1];
-                    }
-                }
-                self.ensure_visible();
+                self.move_selection(-1);
                 None
             }
             KeyCode::PageDown => {
@@ -131,6 +119,17 @@ impl HelpOverlay {
             }
             _ => None,
         }
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let indices = self.actionable_indices();
+        if let Some(pos) = indices.iter().position(|&i| i == self.selected) {
+            let new_pos = pos as isize + delta;
+            if new_pos >= 0 && (new_pos as usize) < indices.len() {
+                self.selected = indices[new_pos as usize];
+            }
+        }
+        self.ensure_visible();
     }
 
     /// Adjust scroll so the selected line is visible.

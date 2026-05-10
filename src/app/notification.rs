@@ -17,20 +17,19 @@ pub struct Notification {
 
 impl Notification {
     pub fn new(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            created_at: Instant::now(),
-            duration: Duration::from_secs(3),
-            is_error: false,
-        }
+        Self { message: message.to_string(), is_error: false, ..Self::base() }
     }
 
     pub fn error(message: &str) -> Self {
+        Self { message: message.to_string(), is_error: true, ..Self::base() }
+    }
+
+    fn base() -> Self {
         Self {
-            message: message.to_string(),
+            message: String::new(),
             created_at: Instant::now(),
             duration: Duration::from_secs(3),
-            is_error: true,
+            is_error: false,
         }
     }
 
