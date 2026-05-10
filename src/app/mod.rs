@@ -162,8 +162,7 @@ impl App {
             for result in self.async_task_manager.drain_completed() {
                 if result.ok {
                     self.notifications.notify(&result.message);
-                    // Refresh views after successful commit/push/fetch
-                    if result.label == "Commit" || result.label == "Push" || result.label == "Fetch" {
+                    if result.refresh_on_success {
                         self.refresh_all();
                     }
                 } else {

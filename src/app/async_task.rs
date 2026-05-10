@@ -9,31 +9,28 @@ use std::{
 
 use crate::gitops::Repository;
 
-fn ok(label: &str, message: String) -> TaskResult {
+fn ok(message: String) -> TaskResult {
     TaskResult {
-        label: label.to_string(),
         message,
         ok: true,
+        refresh_on_success: true,
     }
 }
 
-fn fail(label: &str, message: String) -> TaskResult {
+fn fail(message: String) -> TaskResult {
     TaskResult {
-        label: label.to_string(),
         message,
         ok: false,
+        refresh_on_success: false,
     }
 }
 
 /// A completed background task with its result message.
 #[derive(Debug, Clone)]
 pub struct TaskResult {
-    /// Short label shown in notification, e.g. "Commit" or "Push"
-    pub label: String,
-    /// Human-readable result or error message
     pub message: String,
-    /// True if the operation succeeded
     pub ok: bool,
+    pub refresh_on_success: bool,
 }
 
 /// A running or completed background task.
@@ -56,11 +53,10 @@ impl TaskHandle {
                 }
                 Err(TryRecvError::Empty) => None,
                 Err(TryRecvError::Disconnected) => {
-                    // Thread panicked or sender dropped without sending a result
                     let result = TaskResult {
-                        label: "Task".to_string(),
                         message: "Background task failed unexpectedly".to_string(),
                         ok: false,
+                        refresh_on_success: false,
                     };
                     *self = TaskHandle::Done(result.clone());
                     Some(result)
@@ -130,24 +126,22 @@ impl TaskManager {
     /// Spawn a git commit operation in background.
     pub fn spawn_commit(&mut self, repo: Repository, message: String) -> usize {
         self.spawn("Commit".into(), move || match repo.commit(&message) {
-            Ok(_) => ok("Commit", format!("Committed: {}", message)),
-            Err(e) => fail("Commit", format!("Commit failed: {}", e)),
+            Ok(_) => ok(format!("Committed: {}", message)),
+            Err(e) => fail(format!("Commit failed: {}", e)),
         })
     }
 
-    /// Spawn a git push_current operation in background.
     pub fn spawn_push_current(&mut self, repo: Repository) -> usize {
         self.spawn("Push".into(), move || match repo.push_current() {
-            Ok(output) => ok("Push", format!("Push: {}", output)),
-            Err(e) => fail("Push", format!("Push failed: {}", e)),
+            Ok(output) => ok(format!("Push: {}", output)),
+            Err(e) => fail(format!("Push failed: {}", e)),
         })
     }
 
-    /// Spawn a git fetch_all operation in background.
     pub fn spawn_fetch_all(&mut self, repo: Repository) -> usize {
         self.spawn("Fetch".into(), move || match repo.fetch_all() {
-            Ok(output) => ok("Fetch", format!("Fetch all: {}", output)),
-            Err(e) => fail("Fetch", format!("Fetch all failed: {}", e)),
+            Ok(output) => ok(format!("Fetch all: {}", output)),
+            Err(e) => fail(format!("Fetch all failed: {}", e)),
         })
     }
 
@@ -184,15 +178,15 @@ mod tests {
         assert!(!mgr.has_running());
 
         mgr.spawn("Test".to_string(), || TaskResult {
-            label: "Test".to_string(),
             message: "done".to_string(),
             ok: true,
+            refresh_on_success: true,
         });
         assert!(mgr.has_running());
         assert!(mgr.running_label().is_some());
 
         // Give thread time to complete
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let results = mgr.drain_completed();
         assert_eq!(results.len(), 1);
@@ -208,13 +202,13 @@ mod tests {
 
         for i in 0..3 {
             mgr.spawn(format!("Task{}", i), move || TaskResult {
-                label: format!("Task{}", i),
                 message: format!("result{}", i),
                 ok: true,
+                refresh_on_success: true,
             });
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let results = mgr.drain_completed();
         assert_eq!(results.len(), 3);
@@ -225,12 +219,12 @@ mod tests {
     fn drain_with_failure() {
         let mut mgr = TaskManager::new();
         mgr.spawn("Fail".to_string(), || TaskResult {
-            label: "Fail".to_string(),
             message: "something broke".to_string(),
             ok: false,
+            refresh_on_success: false,
         });
 
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let results = mgr.drain_completed();
         assert_eq!(results.len(), 1);
@@ -250,11 +244,11 @@ mod tests {
         let mut mgr = TaskManager::new();
         // Spawn a task that takes a while
         mgr.spawn("Slow".to_string(), || {
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            std::thread::sleep(std::time::Duration::from_millis(200));
             TaskResult {
-                label: "Slow".to_string(),
                 message: "done".to_string(),
                 ok: true,
+                refresh_on_success: true,
             }
         });
 
