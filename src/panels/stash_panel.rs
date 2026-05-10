@@ -126,8 +126,8 @@ impl Panel for StashPanel {
 
         // Render help
         let help_text = match self.tab {
-            StashTab::Stash => "Enter:pop a:apply d:drop s:stash Tab:shelve q:back",
-            StashTab::Shelve => "Enter:apply d:delete Tab:stash q:back",
+            StashTab::Stash => "d:drop a:apply s:stash ?:help",
+            StashTab::Shelve => "Enter:apply d:drop ?:help",
         };
         let help = Paragraph::new(help_text).style(self.styles.text_secondary);
         f.render_widget(help, chunks[2]);

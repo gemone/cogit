@@ -6,6 +6,7 @@ pub mod types;
 use anyhow::Result;
 use std::path::Path;
 
+#[derive(Clone)]
 pub struct Repository {
     path: std::path::PathBuf,
     gix_repo: Option<gix::Repository>,

@@ -1,4 +1,6 @@
+pub mod async_task;
 pub mod cmdline;
+pub mod confirmation;
 pub mod help;
 pub mod keymap;
 pub mod layout;
@@ -82,6 +84,8 @@ pub struct App {
     gitignore_popup: Option<(String, u16)>,   // (content, scroll)
     merge_dialog: Option<(String, MergePreview)>, // (branch, preview)
     help_overlay: HelpOverlay,
+    confirmation_dialog: Option<confirmation::ConfirmationDialog>,
+    async_task_manager: async_task::TaskManager,
 }
 
 impl App {
@@ -135,6 +139,8 @@ impl App {
             gitignore_popup: None,
             merge_dialog: None,
             help_overlay,
+            confirmation_dialog: None,
+            async_task_manager: async_task::TaskManager::new(),
         };
         app.switch_view(app.view.clone());
         Ok(app)
@@ -152,6 +158,17 @@ impl App {
                 }
             }
             self.notifications.cleanup();
+            // Poll completed background tasks and show results
+            for result in self.async_task_manager.drain_completed() {
+                if result.ok {
+                    self.notifications.notify(&result.message);
+                    if result.refresh_on_success {
+                        self.refresh_all();
+                    }
+                } else {
+                    self.notifications.notify_error(&result.message);
+                }
+            }
         }
         Ok(())
     }
@@ -169,6 +186,10 @@ impl App {
             }
             if self.gitignore_popup.is_some() {
                 self.gitignore_popup = None;
+                return;
+            }
+            if self.confirmation_dialog.is_some() {
+                self.confirmation_dialog = None;
                 return;
             }
         }
@@ -200,11 +221,37 @@ impl App {
             }
         }
 
+        // Confirmation dialog takes priority (before the ignore-all guard)
+        if let Some(ref mut dialog) = self.confirmation_dialog {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    dialog.move_up();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    dialog.move_down();
+                }
+                KeyCode::Enter | KeyCode::Char('y') => {
+                    let dialog = std::mem::take(&mut self.confirmation_dialog);
+                    if let Some(d) = dialog {
+                        if d.confirmed() {
+                            self.dispatch_confirmed(d.confirmation.to_action());
+                        }
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('c') | KeyCode::Char('q') => {
+                    self.confirmation_dialog = None;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Ignore all other keys while a popup is active so they do not
         // fall through to the normal app dispatch.
         if self.ref_diff_popup.is_some()
             || self.diff_popup.is_some()
             || self.gitignore_popup.is_some()
+            || self.confirmation_dialog.is_some()
         {
             return;
         }
@@ -377,20 +424,8 @@ impl App {
                 }
                 KeyCode::Char('f') => {
                     if let Some((name, _)) = self.pending_checkout.take() {
-                        // Force Checkout: discard local changes and checkout
-                        match self.repo.checkout_force(&name) {
-                            Ok(_) => {
-                                self.notifications.notify(&format!(
-                                    "Force checkout: switched to {} (local changes discarded)",
-                                    name
-                                ));
-                                self.refresh_all();
-                            }
-                            Err(e) => {
-                                self.notifications
-                                    .notify_error(&format!("Force checkout failed: {}", e));
-                            }
-                        }
+                        // Route through confirmation dialog
+                        self.dispatch(Action::ForceCheckout(name));
                     }
                 }
                 KeyCode::Char('q') | KeyCode::Esc => {
@@ -462,7 +497,10 @@ impl App {
 
         // Help overlay takes priority
         if self.help_overlay.is_visible() {
-            self.help_overlay.handle_key(key);
+            if let Some(action) = self.help_overlay.handle_key(key) {
+                self.help_overlay.close();
+                self.dispatch(action);
+            }
             return;
         }
 
@@ -819,6 +857,18 @@ impl App {
     }
 
     fn dispatch(&mut self, action: Action) {
+        // Intercept dangerous actions and show confirmation dialog first
+        if let Some(conf) = confirmation::Confirmation::from_action(&action) {
+            self.confirmation_dialog = Some(confirmation::ConfirmationDialog::new(conf));
+            return;
+        }
+
+        self.dispatch_confirmed(action);
+    }
+
+    /// Execute an action directly, bypassing confirmation interception.
+    /// Called after the user has already confirmed via the dialog.
+    fn dispatch_confirmed(&mut self, action: Action) {
         match action {
             Action::Quit => {
                 self.should_quit = true;
@@ -1001,16 +1051,10 @@ impl App {
                     self.commit_dialog = Some(String::new());
                 }
             }
-            Action::Commit(msg) => match self.repo.commit(&msg) {
-                Ok(_) => {
-                    self.console_panel.record("Commit", &msg, "ok");
-                    self.notifications.notify(&format!("Committed: {}", msg));
-                    self.refresh_all();
-                }
-                Err(e) => self
-                    .notifications
-                    .notify_error(&format!("Commit failed: {}", e)),
-            },
+            Action::Commit(msg) => {
+                let repo = self.repo.clone();
+                self.async_task_manager.spawn_commit(repo, msg);
+            }
             Action::WipCommit => match self.repo.wip_commit() {
                 Ok(_) => {
                     self.console_panel.record("WIP Commit", "", "ok");
@@ -1087,28 +1131,27 @@ impl App {
                     }
                 }
             }
-            Action::PushCurrent => match self.repo.push_current() {
+            Action::ForceCheckout(name) => match self.repo.checkout_force(&name) {
                 Ok(_) => {
-                    self.console_panel.record("Push", "current branch", "ok");
-                    self.notifications.notify("Pushed successfully");
+                    self.notifications.notify(&format!(
+                        "Force checkout: switched to {} (local changes discarded)",
+                        name
+                    ));
                     self.refresh_all();
                 }
                 Err(e) => {
                     self.notifications
-                        .notify_error(&format!("Push failed: {}", e));
+                        .notify_error(&format!("Force checkout failed: {}", e));
                 }
             },
-            Action::FetchAll => match self.repo.fetch_all() {
-                Ok(_) => {
-                    self.console_panel.record("Fetch", "all remotes", "ok");
-                    self.notifications.notify("Fetched all remotes");
-                    self.refresh_all();
-                }
-                Err(e) => {
-                    self.notifications
-                        .notify_error(&format!("Fetch failed: {}", e));
-                }
-            },
+            Action::PushCurrent => {
+                let repo = self.repo.clone();
+                self.async_task_manager.spawn_push_current(repo);
+            }
+            Action::FetchAll => {
+                let repo = self.repo.clone();
+                self.async_task_manager.spawn_fetch_all(repo);
+            }
             Action::PullCurrent => match self.repo.pull_current() {
                 Ok(_) => {
                     self.console_panel.record("Pull", "current branch", "ok");
@@ -1401,7 +1444,7 @@ impl App {
                 }
             },
             Action::Help => {
-                self.help_overlay.open();
+                self.help_overlay.open(&self.keymap, &self.view, &self.mode);
             }
             Action::ShowDiff(path) => {
                 let content = self
@@ -1830,14 +1873,14 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
                 Constraint::Min(8),
+                Constraint::Length(1),
                 Constraint::Length(1),
             ])
             .split(body_area);
 
-        self.draw_status_bar(f, chunks[0]);
-        self.draw_tiled_layout(f, chunks[1]);
+        self.draw_tiled_layout(f, chunks[0]);
+        self.draw_status_bar(f, chunks[1]);
         self.draw_footer(f, chunks[2]);
 
         // Command line at bottom
@@ -1896,6 +1939,11 @@ impl App {
             self.draw_gitignore_popup(f, size, content, &scroll);
         }
 
+        // Confirmation dialog overlay
+        if let Some(ref dialog) = self.confirmation_dialog {
+            dialog.render(f, size, &self.styles);
+        }
+
         // Notifications on top of everything
         self.notifications.render(f, size);
 
@@ -1925,16 +1973,11 @@ impl App {
                 self.styles.text_primary,
             ),
         ];
-        if let Some(shortcuts) = Self::mode_shortcuts(&self.keymap) {
+        // Show running background task indicator
+        if let Some(label) = self.async_task_manager.running_label() {
             spans.push(Span::styled(
-                format!(" {} ", shortcuts),
-                self.styles.text_secondary,
-            ));
-        }
-        if let Some(shortcuts) = Self::status_bar_layout_shortcuts(&self.keymap) {
-            spans.push(Span::styled(
-                format!(" {} ", shortcuts),
-                self.styles.text_secondary,
+                format!(" ⚙ {}...", label),
+                self.styles.highlight.add_modifier(Modifier::BOLD),
             ));
         }
         let status_bar = Paragraph::new(Line::from(spans))
@@ -1967,6 +2010,9 @@ impl App {
             format!("[active:{}]", self.layout.active_label()),
             format!("[keymap:{}]", self.keymap.preset_name()),
         ];
+        if let Some(label) = self.async_task_manager.running_label() {
+            footer_parts.push(format!("[⚙ {}...]", label));
+        }
         for hint in self.keymap.bindings_for(KeyContext::Global) {
             footer_parts.push(format!("{}:{}", hint.key, hint.description));
         }
@@ -2089,7 +2135,7 @@ impl App {
             })
             .collect();
 
-        let title = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", path);
+        let title = format!(" Diff: {} ", path);
         let paragraph = Paragraph::new(lines)
             .style(popup_style())
             .block(popup_block(
@@ -2533,7 +2579,7 @@ impl App {
             })
             .collect();
 
-        let title_str = format!(" Diff: {} (j/k:scroll G/g:jump PgUp/PgDn) ", title);
+        let title_str = format!(" Diff: {} ", title);
         let paragraph = Paragraph::new(lines)
             .style(popup_style())
             .block(popup_block(
@@ -2566,7 +2612,7 @@ impl App {
         let paragraph = Paragraph::new(lines)
             .style(popup_style())
             .block(popup_block(
-                " .gitignore (j/k:scroll G/g:jump PgUp/PgDn) ",
+                " .gitignore ",
                 Style::default().fg(ratatui::style::Color::Green),
             ))
             .scroll(((*scroll), 0));
@@ -2802,7 +2848,7 @@ mod tests {
     }
 
     #[test]
-    fn status_bar_renders_mode_label_and_native_mode_shortcuts() {
+    fn status_bar_renders_mode_label() {
         let repo_dir = setup_test_repo("status-mode-hints");
         let app = App::new(&repo_dir).unwrap();
         let backend = TestBackend::new(120, 8);
@@ -2821,7 +2867,6 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("mode:NORMAL"));
-        assert!(rendered.contains("modes:Esc normal / i edit / v visual"));
     }
 
     #[test]

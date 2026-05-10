@@ -47,6 +47,7 @@ pub enum Action {
     AmendCommit,
     CheckoutBranch(String),
     CheckoutRemoteBranch(String),
+    ForceCheckout(String),
     PushCurrent,
     FetchAll,
     Help,

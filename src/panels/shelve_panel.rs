@@ -148,7 +148,7 @@ impl Panel for ShelvePanel {
         let help_text = if self.input_mode {
             "Enter:confirm Esc:cancel"
         } else {
-            "n:new s:toggle-staged p:pop a:apply d:drop Enter:diff q:back"
+            "Enter:pop a:apply d:drop Space:diff ?:help"
         };
         let help = Paragraph::new(help_text).style(self.styles.text_secondary);
         let help_area = Rect {
@@ -228,15 +228,15 @@ impl Panel for ShelvePanel {
                 self.include_staged = !self.include_staged;
                 None
             }
-            KeyCode::Char('p') => {
+            KeyCode::Enter => {
                 if let Some(idx) = self.selected_index() {
-                    return Some(Action::ShelveApply(idx, false));
+                    return Some(Action::ShelveApply(idx, true));
                 }
                 None
             }
             KeyCode::Char('a') => {
                 if let Some(idx) = self.selected_index() {
-                    return Some(Action::ShelveApply(idx, true));
+                    return Some(Action::ShelveApply(idx, false));
                 }
                 None
             }
@@ -246,7 +246,7 @@ impl Panel for ShelvePanel {
                 }
                 None
             }
-            KeyCode::Enter => {
+            KeyCode::Char(' ') => {
                 if let Some(index) = self.selected_index() {
                     // Show diff in popup
                     if let Ok(repo) = Repository::open(&self.repo)
