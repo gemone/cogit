@@ -17,6 +17,7 @@ use std::path::Path;
 
 use crate::gitops::Repository;
 use crate::gitops::shell::{MergePreview, MergeStrategy};
+use crate::keymap::{Context, KeySpec, action_from_name};
 use crate::panels::{
     Action, Panel, branch_panel::BranchPanel, filelist_panel::FileListPanel, log_panel::LogPanel,
     remote_panel, shelve_panel::ShelvePanel, stash_panel::StashPanel,
@@ -65,6 +66,7 @@ pub struct App {
     gitignore_popup: Option<(String, u16)>, // (content, scroll)
     merge_dialog: Option<(String, MergePreview)>, // (branch, preview)
     help_overlay: HelpOverlay,
+    keymap: crate::keymap::Keymap,
 }
 
 impl App {
@@ -80,6 +82,7 @@ impl App {
         let cmdline = CmdLine::new(&styles);
         let notifications = NotificationManager::new();
         let help_overlay = HelpOverlay::new(&styles);
+        let keymap = crate::keymap::Keymap::load();
 
         Ok(Self {
             repo_path: repo_path.to_path_buf(),
@@ -106,6 +109,7 @@ impl App {
             gitignore_popup: None,
             merge_dialog: None,
             help_overlay,
+            keymap,
         })
     }
 
@@ -421,10 +425,13 @@ impl App {
             return;
         }
 
-        if key.code == KeyCode::Char('?') {
-            self.dispatch(Action::Help);
-            return;
-        }
+        // Global keymap bindings (e.g. "?"/help) take priority in normal mode.
+        let spec = KeySpec::new(key.code, key.modifiers);
+        if let Some(action_name) = self.keymap.get(Context::Global, &spec)
+            && let Some(action) = action_from_name(action_name) {
+                self.dispatch(action);
+                return;
+            }
 
         if self.mode == Mode::Command {
             self.mode = Mode::Normal;
@@ -461,59 +468,50 @@ impl App {
     }
 
     fn handle_main_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char(':') => {
+        // Configurable keymap has first crack at Main-context keys (PR1).
+        // Behavior with the default table is identical to the previous
+        // hardcoded match; user overrides from keymap.toml take effect here.
+        let spec = KeySpec::new(key.code, key.modifiers);
+        if let Some(action_name) = self.keymap.get(Context::Main, &spec) {
+            if action_name == "command_line" {
                 self.mode = Mode::Command;
                 self.cmdline.open();
+                return;
             }
-            KeyCode::Char('1') => {
-                self.switch_view(View::Branches);
-            }
-            KeyCode::Char('2') => {
-                self.switch_view(View::Log);
-            }
-            KeyCode::Char('4') => {
-                self.switch_view(View::Stash);
-            }
-            KeyCode::Char('R') => {
-                self.switch_view(View::Remote);
-            }
-            KeyCode::Char('S') => {
-                self.switch_view(View::Shelve);
-            }
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-            }
-            KeyCode::Char('?') => {
-                self.dispatch(Action::Help);
-            }
-            KeyCode::Char('s') => {
-                self.dispatch(Action::Stage);
-            }
-            KeyCode::Char('A') => {
-                self.dispatch(Action::StageAll);
-            }
-            KeyCode::Char('u') => {
-                self.dispatch(Action::Unstage);
-            }
-            KeyCode::Char('U') => {
-                self.dispatch(Action::UnstageAll);
-            }
-            KeyCode::Char('c') => {
-                self.dispatch(Action::CommitDialog);
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
+            if Self::is_panel_forwarded(action_name) {
+                // Selection-aware actions (navigation, stage toggle, diff)
+                // are still resolved by the panel from the raw key event.
                 self.filelist.handle_key(key);
+                return;
             }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.filelist.handle_key(key);
+            if let Some(action) = action_from_name(action_name) {
+                self.dispatch(action);
+                return;
             }
-            _ => {
-                if let Some(action) = self.filelist.handle_key(key) {
-                    self.dispatch(action);
-                }
-            }
+            // Unknown action names fall through to the hardcoded path.
         }
+
+        // Hardcoded fallback for keys not covered by the keymap;
+        // parameterized actions (e.g. Ctrl+u reset dialog paths) stay here.
+        if let Some(action) = self.filelist.handle_key(key) {
+            self.dispatch(action);
+        }
+    }
+
+    /// Action names whose behavior depends on the panel's current selection:
+    /// the raw key is forwarded to the file list panel for resolution.
+    fn is_panel_forwarded(action_name: &str) -> bool {
+        matches!(
+            action_name,
+            "nav_down"
+                | "nav_up"
+                | "nav_top"
+                | "nav_bottom"
+                | "nav_page_up"
+                | "nav_page_down"
+                | "stage_toggle"
+                | "diff"
+        )
     }
 
     fn handle_command_key(&mut self, key: KeyEvent) {

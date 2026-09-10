@@ -2,6 +2,7 @@
 
 mod app;
 mod gitops;
+mod keymap;
 mod panels;
 mod vimkeys;
 

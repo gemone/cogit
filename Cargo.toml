@@ -9,3 +9,5 @@ crossterm = "0.28"
 gix = { version = "0.70", features = ["max-performance"] }
 anyhow = "1"
 arboard = "3.3"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
